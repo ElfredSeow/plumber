@@ -1,38 +1,27 @@
 import { IGlobalVariable, IRawTrigger } from '@plumber/types'
 
-import { randomUUID } from 'crypto'
-import { DateTime } from 'luxon'
+import buildManualTriggerItem from '../../common/build-trigger-item'
+import getDataOutMetadata from './get-data-out-metadata'
+
+async function pushManualTriggerItem($: IGlobalVariable) {
+  // The flow owner stands in when no one is logged in, e.g. a background run.
+  const triggeredBy = ($.loggedInUser ?? $.user)?.email ?? ''
+  await $.pushTriggerItem(buildManualTriggerItem(triggeredBy))
+}
 
 const trigger: IRawTrigger = {
   name: 'Run manually',
   key: 'runManually',
   type: 'webhook',
   description: 'Triggers only when a user runs this pipe on demand',
+  getDataOutMetadata,
 
   async run($: IGlobalVariable) {
-    const dateTime = DateTime.now()
-
-    await $.pushTriggerItem({
-      raw: {
-        triggeredAt: dateTime.toISO(),
-      },
-      meta: {
-        internalId: randomUUID(),
-      },
-    })
+    await pushManualTriggerItem($)
   },
 
   async testRun($: IGlobalVariable) {
-    const dateTime = DateTime.now()
-
-    await $.pushTriggerItem({
-      raw: {
-        triggeredAt: dateTime.toISO(),
-      },
-      meta: {
-        internalId: randomUUID(),
-      },
-    })
+    await pushManualTriggerItem($)
   },
 }
 

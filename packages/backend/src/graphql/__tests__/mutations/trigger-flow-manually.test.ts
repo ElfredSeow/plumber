@@ -1,3 +1,4 @@
+import '@/types/luxon-extensions'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import triggerFlowManually from '@/graphql/mutations/trigger-flow-manually'
@@ -35,6 +36,7 @@ function makeContext({
 
   return {
     currentUser: {
+      email: 'editor@example.gov.sg',
       withAccessibleFlows,
     },
   } as unknown as Context
@@ -100,6 +102,7 @@ describe('triggerFlowManually mutation', () => {
     const nextStep = {
       id: 'step-2',
       appKey: 'postman',
+      key: 'sendTransactionalEmail',
     }
     const triggerStep = {
       id: 'step-1',
@@ -130,11 +133,20 @@ describe('triggerFlowManually mutation', () => {
         flowId: 'flow-1',
         stepId: 'step-1',
         testRun: false,
+        triggerItem: expect.objectContaining({
+          raw: {
+            triggeredAt: expect.any(String),
+            date: expect.any(String),
+            time: expect.any(String),
+            triggeredBy: 'editor@example.gov.sg',
+          },
+        }),
       }),
     )
     expect(mocks.enqueueActionJob).toHaveBeenCalledWith(
       expect.objectContaining({
         appKey: 'postman',
+        actionKey: 'sendTransactionalEmail',
         jobName: 'exec-1-step-2',
         jobData: {
           flowId: 'flow-1',
