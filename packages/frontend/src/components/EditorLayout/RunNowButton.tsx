@@ -1,20 +1,23 @@
-import { useContext } from 'react'
 import { useMutation } from '@apollo/client'
-import { Spinner } from '@chakra-ui/react'
+import { Spinner, useDisclosure } from '@chakra-ui/react'
 import {
   Button,
   TouchableTooltip,
   useToast,
 } from '@opengovsg/design-system-react'
+import { useContext } from 'react'
 
 import { EditorContext } from '@/contexts/Editor'
 import { TRIGGER_FLOW_MANUALLY } from '@/graphql/mutations/trigger-flow-manually'
+
+import RunNowConfirmationDialog from './RunNowConfirmationDialog'
 
 export default function RunNowButton() {
   const { flow } = useContext(EditorContext)
 
   const [triggerFlowManually, { loading }] = useMutation(TRIGGER_FLOW_MANUALLY)
   const toast = useToast()
+  const { isOpen, onOpen, onClose } = useDisclosure()
 
   const isViewer = flow?.role === 'viewer'
   const isDisabled = !flow?.active || isViewer || loading
@@ -22,10 +25,10 @@ export default function RunNowButton() {
   const tooltipLabel = isViewer
     ? 'You do not have permission to run this pipe'
     : !flow?.active
-    ? 'Publish this pipe before you can run it manually'
-    : ''
+      ? 'Publish this pipe before you can run it manually'
+      : ''
 
-  const handleRunNow = async () => {
+  const handleConfirm = async () => {
     try {
       await triggerFlowManually({
         variables: {
@@ -46,22 +49,33 @@ export default function RunNowButton() {
       // The GraphQL error is already surfaced to the user via the global
       // Apollo error link (see ApolloProvider), so there is nothing more to
       // do here other than to avoid an unhandled rejection.
+    } finally {
+      onClose()
     }
   }
 
   return (
-    <TouchableTooltip label={tooltipLabel} wrapperStyles={{ width: '100%' }}>
-      <Button
-        variant="outline"
-        colorScheme="secondary"
-        size="sm"
-        isDisabled={isDisabled}
+    <>
+      <TouchableTooltip label={tooltipLabel} wrapperStyles={{ width: '100%' }}>
+        <Button
+          variant="outline"
+          colorScheme="secondary"
+          size="sm"
+          isDisabled={isDisabled}
+          isLoading={loading}
+          spinner={<Spinner fontSize={24} />}
+          onClick={onOpen}
+        >
+          Run now
+        </Button>
+      </TouchableTooltip>
+      <RunNowConfirmationDialog
+        flowName={flow?.name}
+        isOpen={isOpen}
         isLoading={loading}
-        spinner={<Spinner fontSize={24} />}
-        onClick={handleRunNow}
-      >
-        Run now
-      </Button>
-    </TouchableTooltip>
+        onClose={onClose}
+        onConfirm={handleConfirm}
+      />
+    </>
   )
 }

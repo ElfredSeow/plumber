@@ -1,5 +1,4 @@
-import { randomUUID } from 'crypto'
-
+import buildManualTriggerItem from '@/apps/manual/common/build-trigger-item'
 import { BadUserInputError } from '@/errors/graphql-errors'
 import { DEFAULT_JOB_OPTIONS } from '@/helpers/default-job-configuration'
 import { enqueueActionJob } from '@/queues/action'
@@ -39,12 +38,7 @@ const triggerFlowManually: MutationResolvers['triggerFlowManually'] = async (
     )
   }
 
-  const triggerItem = {
-    raw: {},
-    meta: {
-      internalId: randomUUID(),
-    },
-  }
+  const triggerItem = buildManualTriggerItem(context.currentUser.email)
 
   const { executionId, shouldExecute } = await processTrigger({
     flowId: flow.id,
@@ -64,6 +58,7 @@ const triggerFlowManually: MutationResolvers['triggerFlowManually'] = async (
 
     await enqueueActionJob({
       appKey: nextStep.appKey,
+      actionKey: nextStep.key,
       jobName,
       jobData: {
         flowId: flow.id,
