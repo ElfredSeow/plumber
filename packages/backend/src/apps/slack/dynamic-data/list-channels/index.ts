@@ -31,7 +31,7 @@ const dynamicData: IDynamicData = {
   async run($: IGlobalVariable): Promise<DynamicDataOutput> {
     const result: DynamicDataOutput = {
       data: [],
-      error: null,
+      error: undefined,
     }
 
     let cursor: string | undefined
@@ -50,7 +50,7 @@ const dynamicData: IDynamicData = {
             cursor,
           },
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           logger.error(error)
           throw new Error('Failed to list channels')
         })
@@ -62,7 +62,7 @@ const dynamicData: IDynamicData = {
 
       cursor = data.response_metadata?.next_cursor
 
-      const channels = data.channels.map((channel) => {
+      const channels = data.channels.map((channel: SlackConversation) => {
         return {
           value: channel.id,
           name: channel.name,

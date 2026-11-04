@@ -1,11 +1,9 @@
 import { IGlobalVariable } from '@plumber/types'
-
-import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import HttpError from '@/errors/http'
 import RetriableError from '@/errors/retriable-error'
 
+import { makeHttpError } from '../../../../../test/utils/make-http-error'
 import sendMessageAction from '../../actions/send-message'
 
 const mocks = vi.hoisted(() => ({
@@ -53,6 +51,7 @@ describe('send message', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -69,7 +68,7 @@ describe('send message', () => {
     mocks.httpPost.mockResolvedValueOnce(mockHttpResponse)
     const result = await sendMessageAction.run($)
     expect(result).toBeUndefined()
-    expect(mocks.setActionItem).toBeCalledWith({
+    expect(mocks.setActionItem).toHaveBeenCalledWith({
       raw: mockHttpResponse.data,
     })
   })
@@ -79,9 +78,7 @@ describe('send message', () => {
     $.step.parameters.chatId = '123'
     $.step.parameters.disableNotification = null
 
-    await expect(sendMessageAction.run($)).rejects.toThrowError(
-      'Empty message text',
-    )
+    await expect(sendMessageAction.run($)).rejects.toThrow('Empty message text')
   })
 
   it('should throw step error if message text is filled with new lines only', async () => {
@@ -89,9 +86,7 @@ describe('send message', () => {
     $.step.parameters.chatId = '123'
     $.step.parameters.disableNotification = null
 
-    await expect(sendMessageAction.run($)).rejects.toThrowError(
-      'Empty message text',
-    )
+    await expect(sendMessageAction.run($)).rejects.toThrow('Empty message text')
   })
 
   it.each([
@@ -104,19 +99,14 @@ describe('send message', () => {
       $.step.parameters.chatId = '123'
       $.step.parameters.disableNotification = null
 
-      const error = {
-        response: {
-          data: {
-            error: errorDescription,
-          },
+      const httpError = makeHttpError({
+        data: {
+          error: errorDescription,
         },
-      } as unknown as AxiosError
-      const httpError = new HttpError(error)
+      })
       mocks.httpPost.mockRejectedValueOnce(httpError)
       // throw partial step error message
-      await expect(sendMessageAction.run($)).rejects.toThrowError(
-        RetriableError,
-      )
+      await expect(sendMessageAction.run($)).rejects.toThrow(RetriableError)
     },
   )
 
@@ -146,19 +136,16 @@ describe('send message', () => {
       $.step.parameters.chatId = '123'
       $.step.parameters.disableNotification = null
 
-      const error400 = {
-        response: {
-          data: {
-            description: errorDescription,
-          },
-          status: 400,
-          statusText: 'Bad request',
+      const httpError = makeHttpError({
+        data: {
+          description: errorDescription,
         },
-      } as AxiosError
-      const httpError = new HttpError(error400)
+        status: 400,
+        statusText: 'Bad request',
+      })
       mocks.httpPost.mockRejectedValueOnce(httpError)
       // throw partial step error message
-      await expect(sendMessageAction.run($)).rejects.toThrowError(stepErrorName)
+      await expect(sendMessageAction.run($)).rejects.toThrow(stepErrorName)
     },
   )
 
@@ -176,18 +163,15 @@ describe('send message', () => {
     $.step.parameters.disableNotification = null
     $.execution.testRun = false
 
-    const error400 = {
-      response: {
-        data: {
-          description:
-            'Bad Request: group chat was upgraded to a supergroup chat',
-          parameters: { migrate_to_chat_id: -456 }, // new chat id
-        },
-        status: 400,
-        statusText: 'Bad request',
+    const httpError = makeHttpError({
+      data: {
+        description:
+          'Bad Request: group chat was upgraded to a supergroup chat',
+        parameters: { migrate_to_chat_id: -456 }, // new chat id
       },
-    } as AxiosError
-    const httpError = new HttpError(error400)
+      status: 400,
+      statusText: 'Bad request',
+    })
     mocks.httpPost.mockRejectedValueOnce(httpError)
 
     await expect(sendMessageAction.run($)).rejects.toThrow(RetriableError)
@@ -203,15 +187,12 @@ describe('send message', () => {
       $.step.parameters.chatId = '123'
       $.step.parameters.disableNotification = null
 
-      const error = {
-        response: {
-          status: errorStatusCode,
-        },
-      } as AxiosError
-      const httpError = new HttpError(error)
+      const httpError = makeHttpError({
+        status: errorStatusCode,
+      })
       mocks.httpPost.mockRejectedValueOnce(httpError)
       // throw partial step error message
-      await expect(sendMessageAction.run($)).rejects.toThrowError(stepErrorName)
+      await expect(sendMessageAction.run($)).rejects.toThrow(stepErrorName)
     },
   )
 
@@ -228,18 +209,15 @@ describe('send message', () => {
       $.step.parameters.chatId = '123'
       $.step.parameters.disableNotification = null
 
-      const error = {
-        response: {
-          data: {
-            description: errorDescription,
-          },
-          status: errorStatusCode,
+      const httpError = makeHttpError({
+        data: {
+          description: errorDescription,
         },
-      } as AxiosError
-      const httpError = new HttpError(error)
+        status: errorStatusCode,
+      })
       mocks.httpPost.mockRejectedValueOnce(httpError)
       // throw uncaught error
-      await expect(sendMessageAction.run($)).rejects.toThrowError()
+      await expect(sendMessageAction.run($)).rejects.toThrow()
     },
   )
 })

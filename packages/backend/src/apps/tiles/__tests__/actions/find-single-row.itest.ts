@@ -1,6 +1,5 @@
 import { IGlobalVariable } from '@plumber/types'
-
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StepError from '@/errors/step'
 import {
@@ -16,28 +15,19 @@ import { getTableOperations } from '@/models/tiles/factory'
 import * as pgTableRowFunctions from '@/models/tiles/pg/table-row-functions'
 import { DatabaseType, TableRowFilter } from '@/models/tiles/types'
 import User from '@/models/user'
+import { createStepQueryChain, spyOnStepQuery } from '@/test/spy-on-step-query'
 import Context from '@/types/express/context'
 
 import tiles from '../..'
 import findSingleRowAction from '../../actions/find-single-row'
 
-const mocks = vi.hoisted(() => ({
-  stepQueryResult: vi.fn().mockResolvedValue({
-    config: {
-      adminOverride: {
-        tileScanLimit: 100,
-      },
+const stepQueryResult = vi.fn().mockResolvedValue({
+  config: {
+    adminOverride: {
+      tileScanLimit: 100,
     },
-  }),
-}))
-
-vi.mock('@/models/step', () => ({
-  default: {
-    query: vi.fn().mockReturnThis(),
-    findById: vi.fn().mockReturnThis(),
-    throwIfNotFound: mocks.stepQueryResult,
   },
-}))
+})
 
 describe.each([['ddb'], ['pg']])(
   'tiles find single row action: %s',
@@ -50,6 +40,14 @@ describe.each([['ddb'], ['pg']])(
     let $: IGlobalVariable
 
     beforeEach(async () => {
+      spyOnStepQuery(
+        createStepQueryChain({
+          findById: vi.fn(() => ({
+            throwIfNotFound: stepQueryResult,
+          })),
+        }),
+      )
+
       context = await generateMockContext()
 
       const mockTable = await generateMockTable({
@@ -105,20 +103,28 @@ describe.each([['ddb'], ['pg']])(
       } as unknown as IGlobalVariable
     })
 
+    afterEach(() => {
+      vi.clearAllMocks()
+      vi.restoreAllMocks()
+    })
+
     it('should allow owners to find single row', async () => {
       await expect(findSingleRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should return an empty columns if no rows are found', async () => {
       const filters = $.step.parameters.filters as TableRowFilter[]
       filters[0].value = 'not a valid value'
       await expect(findSingleRowAction.run($)).resolves.toBeUndefined()
-      const emptyRow = dummyColumnIds.reduce((acc, c) => {
-        acc[c] = ''
-        return acc
-      }, {} as Record<string, string>)
-      expect($.setActionItem).toBeCalledWith({
+      const emptyRow = dummyColumnIds.reduce(
+        (acc, c) => {
+          acc[c] = ''
+          return acc
+        },
+        {} as Record<string, string>,
+      )
+      expect($.setActionItem).toHaveBeenCalledWith({
         raw: {
           rowsFound: 0,
           rowId: ' ',
@@ -130,7 +136,7 @@ describe.each([['ddb'], ['pg']])(
     it('should allow editors to find single row', async () => {
       $.user = editor
       await expect(findSingleRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should not allow viewers to find single row', async () => {

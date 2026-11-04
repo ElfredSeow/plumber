@@ -1,7 +1,6 @@
-/* eslint-disable no-console */
+/* oxlint-disable no-console */
 import '@/config/orm'
 import '@/config/dynamodb'
-
 import { argv } from 'process'
 
 import TableColumnMetadata from '@/models/table-column-metadata'
@@ -15,7 +14,7 @@ import {
 const TABLE_ID = argv[2]
 if (!TABLE_ID) {
   console.log(
-    'Please provide a table ID e.g. npm run -w backend dynamodb:seed -- <YOUR_TABLE_ID>',
+    'Please provide a table ID e.g. pnpm --filter backend dynamodb:seed <YOUR_TABLE_ID>',
   )
   process.exit(1)
 }

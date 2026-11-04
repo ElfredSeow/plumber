@@ -1,7 +1,5 @@
 import '@/types/luxon-extensions'
-
 import { IGlobalVariable } from '@plumber/types'
-
 import { Settings as LuxonSettings } from 'luxon'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,6 +27,7 @@ describe('convert date time', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -41,6 +40,7 @@ describe('convert date time', () => {
     { toFormat: 'yyyy-LL-dd', expectedResult: '2024-04-01' },
     { toFormat: 'hh:mm a', expectedResult: '12:05 pm' },
     { toFormat: 'hh:mm:ss a', expectedResult: '12:05:10 pm' },
+    { toFormat: 'HH:mm', expectedResult: '12:05' },
     { toFormat: 'dd LLL yyyy hh:mm a', expectedResult: '01 Apr 2024 12:05 pm' },
     {
       toFormat: 'dd LLL yyyy hh:mm:ss a',
@@ -55,7 +55,7 @@ describe('convert date time', () => {
       }
       spec.transformData($, '2024-04-01T12:05:10.000+08:00')
 
-      expect(mocks.setActionItem).toBeCalledWith({
+      expect(mocks.setActionItem).toHaveBeenCalledWith({
         raw: { result: expectedResult },
       })
     },
@@ -117,6 +117,18 @@ describe('convert date time', () => {
       expectedResult: '11:45 pm',
     },
     {
+      inputFormat: 'hh:mm a',
+      inputValue: '11:45 pm',
+      toFormat: 'HH:mm',
+      expectedResult: '23:45',
+    },
+    {
+      inputFormat: 'HH:mm',
+      inputValue: '23:45',
+      toFormat: 'hh:mm a',
+      expectedResult: '11:45 pm',
+    },
+    {
       inputFormat: 'dd LLL yyyy hh:mm a',
       inputValue: '01 Apr 2024 11:45 pm',
       toFormat: 'dd LLL yyyy',
@@ -136,7 +148,7 @@ describe('convert date time', () => {
     }
     spec.transformData($, inputValue)
 
-    expect(mocks.setActionItem).toBeCalledWith({
+    expect(mocks.setActionItem).toHaveBeenCalledWith({
       raw: { result: expectedResult },
     })
   })
@@ -195,6 +207,19 @@ describe('convert date time', () => {
       toFormat: 'hh:mm:ss a',
       expectedResult: '09:30:00 am',
     },
+    // HH:mm accepts both padded and non-padded hour
+    {
+      inputFormat: 'HH:mm',
+      inputValue: '09:30',
+      toFormat: 'hh:mm a',
+      expectedResult: '09:30 am',
+    },
+    {
+      inputFormat: 'HH:mm',
+      inputValue: '9:30',
+      toFormat: 'HH:mm',
+      expectedResult: '09:30',
+    },
     // dd LLL yyyy hh:mm a accepts both padded and non-padded
     {
       inputFormat: 'dd LLL yyyy hh:mm a',
@@ -216,7 +241,7 @@ describe('convert date time', () => {
     }
     spec.transformData($, inputValue)
 
-    expect(mocks.setActionItem).toBeCalledWith({
+    expect(mocks.setActionItem).toHaveBeenCalledWith({
       raw: { result: expectedResult },
     })
   })
@@ -254,7 +279,7 @@ describe('convert date time', () => {
     }
     spec.transformData($, inputValue)
 
-    expect(mocks.setActionItem).toBeCalledWith({
+    expect(mocks.setActionItem).toHaveBeenCalledWith({
       raw: { result: expectedResult },
     })
   })

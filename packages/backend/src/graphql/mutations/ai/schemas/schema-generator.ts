@@ -6,7 +6,7 @@ import {
   TOOLBOX_APP_KEY,
 } from '@/apps/toolbox/common/constants'
 
-import { ifThenParametersSchema } from './actions.zod'
+import { ifThenChildCountSchema, ifThenParametersSchema } from './actions.zod'
 
 function getActiveApps(restrictedAppKeys: string[] = []) {
   return Object.fromEntries(
@@ -23,15 +23,22 @@ export function generateSchema(
   baseSchema: z.ZodObject<any>,
   schemaType: 'action' | 'trigger',
   restrictedAppKeys: string[] = [],
+  { includeHidden = false }: { includeHidden?: boolean } = {},
 ) {
   const activeApps = getActiveApps(restrictedAppKeys)
 
   const schemas = Object.entries(activeApps)
     .flatMap(([appKey, app]) => {
+      // Hidden triggers/actions (e.g. FormSG's mrfSubmission) are
+      // system-managed. Never let the AI Builder fabricate one directly via
+      // create_pipe, same guard as create_step's hiddenFromUser check. Only a
+      // proposal preview opts in, since it never creates a step.
+      const isVisible = (item: { hiddenFromUser?: boolean }) =>
+        includeHidden || !item.hiddenFromUser
       const keys =
         schemaType === 'action'
-          ? app?.actions?.map((action) => action.key) || []
-          : app?.triggers?.map((trigger) => trigger.key) || []
+          ? app?.actions?.filter(isVisible).map((action) => action.key) || []
+          : app?.triggers?.filter(isVisible).map((trigger) => trigger.key) || []
 
       if (keys.length === 0) {
         return []
@@ -50,6 +57,15 @@ export function generateSchema(
 
         if (isIfThenAction) {
           extendedFields.parameters = ifThenParametersSchema.prefault({})
+          extendedFields.ifThenChildCount = ifThenChildCountSchema
+        }
+
+        if (
+          schemaType === 'action' &&
+          appKey === 'formsg' &&
+          key === 'mrfSubmission'
+        ) {
+          extendedFields.isApproval = z.boolean().optional()
         }
 
         return baseSchema.extend(extendedFields)

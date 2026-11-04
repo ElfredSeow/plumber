@@ -5,7 +5,6 @@ import StepError from '@/errors/step'
 
 import { extractAuthDataWithPlumberFolder } from '../../common/auth-data'
 import { validateCanAccessFile } from '../../common/file-privacy'
-
 import { parametersSchema } from './schema'
 
 const dynamicData: IDynamicData = {
@@ -56,10 +55,10 @@ const dynamicData: IDynamicData = {
           },
         },
       )
-    ).data.value.map((column) => column.name)
+    ).data.value.map((column: { name: string }) => column.name)
 
     return {
-      data: columnNames.map((columnName) => ({
+      data: columnNames.map((columnName: string) => ({
         name: columnName,
         value: columnName,
       })),

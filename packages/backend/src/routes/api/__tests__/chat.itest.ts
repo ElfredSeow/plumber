@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   getAllLdFlags: vi.fn(),
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
   getRestrictedAppKeys: vi.fn(),
   createMcpBridgeTools: vi.fn(),
+  convertToModelMessages: vi.fn((msgs) => msgs),
 }))
 
 vi.mock('@/helpers/launch-darkly', () => ({
@@ -37,7 +38,7 @@ vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>()
   return {
     ...actual,
-    convertToModelMessages: vi.fn((msgs) => msgs),
+    convertToModelMessages: mocks.convertToModelMessages,
     smoothStream: vi.fn(() => ({})),
     stepCountIs: vi.fn(() => false),
     streamText: mocks.streamText,
@@ -81,31 +82,45 @@ vi.mock('@/helpers/mcp-bridge-tools', () => ({
   createMcpBridgeTools: mocks.createMcpBridgeTools,
 }))
 
-// Helper function to get and execute the POST handler from the chat router
-async function executeChatPostHandler(
-  req: Partial<Request>,
-  res: Partial<Response>,
-) {
-  const chatModule = await import('../chat')
-  const router = chatModule.default
-
-  // Extract the POST handler
-  const postHandler = (router as any).stack.find(
-    (layer: any) => layer.route?.methods?.post,
-  )?.route?.stack[0]?.handle
-
-  if (!postHandler) {
-    throw new Error('POST handler not found in chat router')
-  }
-
-  return postHandler(req, res)
-}
-
 describe('Chat Route Handler', () => {
   let mockReq: Partial<Request>
   let mockRes: Partial<Response>
+  let postHandler: (
+    req: Partial<Request>,
+    res: Partial<Response>,
+  ) => Promise<unknown>
+
+  // Load the router outside the 5s test timeout. Parallel workers make the
+  // first import of this graph slow enough to flake in CI.
+  beforeAll(async () => {
+    const chatModule = await import('../chat')
+    const handler = (chatModule.default as any).stack.find(
+      (layer: any) => layer.route?.methods?.post,
+    )?.route?.stack[0]?.handle
+
+    if (!handler) {
+      throw new Error('POST handler not found in chat router')
+    }
+
+    postHandler = handler
+  }, 30_000)
+
+  async function executeChatPostHandler(
+    req: Partial<Request>,
+    res: Partial<Response>,
+  ) {
+    return postHandler(req, res)
+  }
 
   beforeEach(() => {
+    vi.clearAllMocks()
+    for (const mock of Object.values(mocks)) {
+      if (typeof mock === 'function' && 'mockReset' in mock) {
+        mock.mockReset()
+      }
+    }
+    mocks.observe.mockImplementation((fn) => fn)
+
     mockReq = {
       body: {
         messages: [
@@ -132,9 +147,6 @@ describe('Chat Route Handler', () => {
       setHeader: vi.fn(),
       write: vi.fn(),
     } as Partial<Response>
-
-    // Reset mocks
-    vi.clearAllMocks()
 
     mocks.createMcpBridgeTools.mockReturnValue({})
 
@@ -181,10 +193,6 @@ describe('Chat Route Handler', () => {
       },
     })
   }
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
 
   describe('Handler Behavior', () => {
     it('should process authenticated requests', async () => {
@@ -352,16 +360,51 @@ describe('Chat Route Handler', () => {
       expect(mocks.streamText).toHaveBeenCalled()
     })
 
-    it('should throw error when AI Builder is not enabled', async () => {
+    it('should drop tool calls left without a result by a user stop', async () => {
+      mockReq.body = {
+        messages: [
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'create a pipe' }],
+          },
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'step-start' },
+              {
+                type: 'tool-create_pipe',
+                toolCallId: 'call-1',
+                state: 'input-available',
+                input: { name: 'My pipe', steps: [] },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'try again' }],
+          },
+        ],
+      }
+
       mocks.getAllLdFlags.mockResolvedValueOnce({
-        'ai-builder': { enabled: false },
+        'ai-builder': {
+          enabled: true,
+          config: { chatPromptName: 'chat-v0', version: 'production' },
+        },
       })
+      mocks.getRestrictedAppKeys.mockReturnValueOnce([])
+      mocks.getPrompt.mockResolvedValueOnce({
+        prompt: 'test prompt',
+        toJSON: vi.fn(),
+      })
+      mocks.getActiveTraceId.mockReturnValueOnce('test-trace-id')
 
       await executeChatPostHandler(mockReq, mockRes)
-      expect(mockRes.status).toHaveBeenCalledWith(403)
-      expect(mockRes.json).toHaveBeenCalledWith({
-        error: 'You do not have permissions to use AI Builder!',
-      })
+
+      expect(mocks.convertToModelMessages).toHaveBeenCalledWith(
+        expect.any(Array),
+        { ignoreIncompleteToolCalls: true },
+      )
     })
 
     it('should exclude Excel from restricted apps when user has Excel enabled', async () => {

@@ -1,12 +1,13 @@
+import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 /**
  * Runs a command with variables from a 1Password Environment injected.
  *
  * Keeps local dev secrets off disk. See README.md for the one-time setup.
  */
 import { createClient, DesktopAuth } from '@1password/sdk'
-import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 
 const CONFIG_FILE = 'op-dev.json'
 const EXAMPLE_FILE = 'op-dev.example.json'
@@ -151,7 +152,7 @@ async function fetchVariables(envName) {
 }
 
 function run(command, env) {
-  // npm already split argv through sh -c, so a shell would re-parse quoted --exec values.
+  // The package manager already split argv through sh -c, so a shell would re-parse quoted --exec values.
   const child = spawn(command[0], command.slice(1), {
     stdio: 'inherit',
     env,

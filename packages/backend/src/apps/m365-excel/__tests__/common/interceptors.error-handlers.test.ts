@@ -1,8 +1,6 @@
 // Avoid cyclic imports when importing m365ExcelApp
 import '@/apps'
-
 import type { IGlobalVariable } from '@plumber/types'
-
 import {
   AxiosError,
   type AxiosPromise,
@@ -110,6 +108,7 @@ describe('M365 request error handlers', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

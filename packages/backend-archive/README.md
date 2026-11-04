@@ -29,7 +29,7 @@ Rehydration (`rehydrate-execution`) runs on demand (not scheduled). It reads arc
 Start the dev stack (Postgres + MinIO) from the repo root if it isn't already running:
 
 ```bash
-npm run setup
+pnpm run setup
 ```
 
 This also creates the `plumber-development-archive-bucket` MinIO bucket used below.
@@ -46,11 +46,11 @@ There is no `.env` file. Variables come from three places, in descending priorit
 
 Those placeholders already point at the dev Docker stack, so a local run needs three overrides:
 
-| Variable | Local value | Why |
-|---|---|---|
-| `S3_ACCESS_KEY` | `minio-username` | `.env-example` ships `...`, which MinIO rejects with `InvalidAccessKeyId`. |
-| `S3_SECRET_KEY` | `minio-password` | Same. |
-| `ARCHIVE_ENABLED` | `true` | Defaults to `false`, which exits at once and logs `archival.run.disabled`. |
+| Variable          | Local value      | Why                                                                        |
+| ----------------- | ---------------- | -------------------------------------------------------------------------- |
+| `S3_ACCESS_KEY`   | `minio-username` | `.env-example` ships `...`, which MinIO rejects with `InvalidAccessKeyId`. |
+| `S3_SECRET_KEY`   | `minio-password` | Same.                                                                      |
+| `ARCHIVE_ENABLED` | `true`           | Defaults to `false`, which exits at once and logs `archival.run.disabled`. |
 
 Keep them in the `archival` 1Password environment, or pass them inline as below.
 
@@ -58,19 +58,19 @@ Keep them in the `archival` 1Password environment, or pass them inline as below.
 
 ```bash
 S3_ACCESS_KEY=minio-username S3_SECRET_KEY=minio-password ARCHIVE_ENABLED=true \
-  npm run -w backend-archive archive:backfill-local
+  pnpm --filter backend-archive run archive:backfill-local
 ```
 
 1Password asks for biometric approval before the script starts. `ARCHIVE_DRY_RUN` defaults to `true`, so the run writes to S3 and deletes nothing. Set `ARCHIVE_DRY_RUN=false` for a live, destructive run.
 
 The script logs structured JSON to stdout. Key events to look for:
 
-| Event | Meaning |
-|---|---|
-| `archival.run.start` | Startup — confirms `dryRun`, `retentionDays`, `batchSize`, etc. |
-| `archival.batch.complete` | One batch processed — shows `batchArchived`, `batchSkipped`, `cursor`. |
-| `archival.flow.archived` | All executions for a flow have been processed — lists IDs. |
-| `archival.run.complete` | Final summary — total `executions_archived`, `executions_skipped`, `durationMs`. |
+| Event                     | Meaning                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `archival.run.start`      | Startup — confirms `dryRun`, `retentionDays`, `batchSize`, etc.                  |
+| `archival.batch.complete` | One batch processed — shows `batchArchived`, `batchSkipped`, `cursor`.           |
+| `archival.flow.archived`  | All executions for a flow have been processed — lists IDs.                       |
+| `archival.run.complete`   | Final summary — total `executions_archived`, `executions_skipped`, `durationMs`. |
 
 ### 4. Verify S3 contents
 
@@ -101,8 +101,8 @@ Both the archival and the rehydration script can point at a **live** Postgres an
 Repoint `op-dev.json`'s `archival` entry at a 1Password environment holding the target's variables, `APP_ENV` included. Then use the `-local` scripts:
 
 ```bash
-npm run -w backend-archive archive:rehydrate-local -- --flow-id <uuid>
-npm run -w backend-archive archive:backfill-local
+pnpm --filter backend-archive run archive:rehydrate-local --flow-id <uuid>
+pnpm --filter backend-archive run archive:backfill-local
 ```
 
 The loader injects that environment into the process and writes nothing to disk. Shell exports still outrank it, so you can override a single key inline.
@@ -137,8 +137,8 @@ export ARCHIVE_DRY_RUN=true
 Then run:
 
 ```bash
-npm run -w backend-archive archive:rehydrate -- --flow-id <uuid>
-npm run -w backend-archive archive:backfill
+pnpm --filter backend-archive run archive:rehydrate --flow-id <uuid>
+pnpm --filter backend-archive run archive:backfill
 ```
 
 Both call `ts-node`, a devDependency, so the host needs a full checkout and an install that kept devDependencies. The `Dockerfile.archival` image has neither. Inside that image, call the compiled entrypoint from `/opt/plumber`:
@@ -149,12 +149,12 @@ node packages/backend-archive/dist/scripts/rehydrate-execution.js --flow-id <uui
 
 ### Rehydration subcommands
 
-| Goal | Command |
-|---|---|
-| List all archived execution IDs for a flow | `-- --flow-id <uuid>` |
-| Inspect a single archived execution (JSON to stdout) | `-- --flow-id <uuid> --execution-id <uuid>` |
-| Restore all executions for a flow to Postgres | `-- --flow-id <uuid> --restore` |
-| Restore a single execution to Postgres | `-- --flow-id <uuid> --execution-id <uuid> --restore` |
+| Goal                                                 | Command                                               |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| List all archived execution IDs for a flow           | `-- --flow-id <uuid>`                                 |
+| Inspect a single archived execution (JSON to stdout) | `-- --flow-id <uuid> --execution-id <uuid>`           |
+| Restore all executions for a flow to Postgres        | `-- --flow-id <uuid> --restore`                       |
+| Restore a single execution to Postgres               | `-- --flow-id <uuid> --execution-id <uuid> --restore` |
 
 ### What `--restore` does
 
@@ -246,36 +246,36 @@ aws s3 ls s3://<bucket>/_meta/runs/ \
 
 ## Configuration reference
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `APP_ENV` | no | `development` | Any value other than `development` skips the `.env-example` fallback and the dev defaults below. |
-| `POSTGRES_HOST` / `RDS_PROXY_HOST` | yes (dev/prod) | — | Postgres writer host. `RDS_PROXY_HOST` takes precedence. |
-| `POSTGRES_PORT` | no | `5432` | Postgres port. |
-| `POSTGRES_DATABASE` | yes | `plumber_dev` (dev only) | Database name. |
-| `POSTGRES_USERNAME` | yes | `postgres` (dev only) | Database user. |
-| `POSTGRES_PASSWORD` | no | — | Database password. |
-| `POSTGRES_ENABLE_SSL` | no | `false` | Set to `true` for SSL connections (required in prod). |
-| `ARCHIVE_POSTGRES_READER_HOST` | **yes** | — | Postgres reader host for eligibility scans. Use `localhost` for local dev. |
-| `S3_ENDPOINT` | yes (dev) | — | S3-compatible endpoint URL (MinIO in dev). Not required in AWS — uses IAM. |
-| `S3_ACCESS_KEY` | yes (dev) | — | S3 access key (MinIO in dev). |
-| `S3_SECRET_KEY` | yes (dev) | — | S3 secret key (MinIO in dev). |
-| `ARCHIVE_BUCKET` | **yes** | — | S3 bucket name for archived objects. |
-| `ARCHIVE_ENABLED` | no | `false` | Must be `true` for the archival script to do anything. |
-| `ARCHIVE_DRY_RUN` | no | `false` | When `true`, writes to S3 but skips Postgres deletes. |
-| `ARCHIVE_RETENTION_DAYS` | no | `365` | Executions older than this are eligible for archival. |
-| `ARCHIVE_BATCH_SIZE` | no | `500` | Executions fetched per batch. |
-| `ARCHIVE_BATCH_SLEEP_MS` | no | `2000` | Sleep between batches to reduce DB load. |
-| `ARCHIVE_INTRA_BATCH_CONCURRENCY` | no | `10` | Concurrent S3 uploads within a batch. |
-| `ARCHIVE_MAX_RUNTIME_MS` | **yes** | — | Wall-clock limit for a single run (ms). Set to `0` to disable. |
-| `ARCHIVE_DELETED_FLOWS_ONLY` | no | `false` | Restrict archival to executions belonging to soft-deleted flows. |
-| `ARCHIVE_TEST_RUNS` | no | `false` | When `ARCHIVE_DELETED_FLOWS_ONLY=true`, also archive test executions on active flows. Has no effect when `ARCHIVE_DELETED_FLOWS_ONLY=false`. |
+| Variable                           | Required       | Default                  | Description                                                                                                                                  |
+| ---------------------------------- | -------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`                          | no             | `development`            | Any value other than `development` skips the `.env-example` fallback and the dev defaults below.                                             |
+| `POSTGRES_HOST` / `RDS_PROXY_HOST` | yes (dev/prod) | —                        | Postgres writer host. `RDS_PROXY_HOST` takes precedence.                                                                                     |
+| `POSTGRES_PORT`                    | no             | `5432`                   | Postgres port.                                                                                                                               |
+| `POSTGRES_DATABASE`                | yes            | `plumber_dev` (dev only) | Database name.                                                                                                                               |
+| `POSTGRES_USERNAME`                | yes            | `postgres` (dev only)    | Database user.                                                                                                                               |
+| `POSTGRES_PASSWORD`                | no             | —                        | Database password.                                                                                                                           |
+| `POSTGRES_ENABLE_SSL`              | no             | `false`                  | Set to `true` for SSL connections (required in prod).                                                                                        |
+| `ARCHIVE_POSTGRES_READER_HOST`     | **yes**        | —                        | Postgres reader host for eligibility scans. Use `localhost` for local dev.                                                                   |
+| `S3_ENDPOINT`                      | yes (dev)      | —                        | S3-compatible endpoint URL (MinIO in dev). Not required in AWS — uses IAM.                                                                   |
+| `S3_ACCESS_KEY`                    | yes (dev)      | —                        | S3 access key (MinIO in dev).                                                                                                                |
+| `S3_SECRET_KEY`                    | yes (dev)      | —                        | S3 secret key (MinIO in dev).                                                                                                                |
+| `ARCHIVE_BUCKET`                   | **yes**        | —                        | S3 bucket name for archived objects.                                                                                                         |
+| `ARCHIVE_ENABLED`                  | no             | `false`                  | Must be `true` for the archival script to do anything.                                                                                       |
+| `ARCHIVE_DRY_RUN`                  | no             | `false`                  | When `true`, writes to S3 but skips Postgres deletes.                                                                                        |
+| `ARCHIVE_RETENTION_DAYS`           | no             | `365`                    | Executions older than this are eligible for archival.                                                                                        |
+| `ARCHIVE_BATCH_SIZE`               | no             | `500`                    | Executions fetched per batch.                                                                                                                |
+| `ARCHIVE_BATCH_SLEEP_MS`           | no             | `2000`                   | Sleep between batches to reduce DB load.                                                                                                     |
+| `ARCHIVE_INTRA_BATCH_CONCURRENCY`  | no             | `10`                     | Concurrent S3 uploads within a batch.                                                                                                        |
+| `ARCHIVE_MAX_RUNTIME_MS`           | **yes**        | —                        | Wall-clock limit for a single run (ms). Set to `0` to disable.                                                                               |
+| `ARCHIVE_DELETED_FLOWS_ONLY`       | no             | `false`                  | Restrict archival to executions belonging to soft-deleted flows.                                                                             |
+| `ARCHIVE_TEST_RUNS`                | no             | `false`                  | When `ARCHIVE_DELETED_FLOWS_ONLY=true`, also archive test executions on active flows. Has no effect when `ARCHIVE_DELETED_FLOWS_ONLY=false`. |
 
 ---
 
 ## Running tests
 
 ```bash
-npm run -w backend-archive test:unit
+pnpm --filter backend-archive run test:unit
 ```
 
 ---
@@ -284,4 +284,4 @@ npm run -w backend-archive test:unit
 
 The archival task runs as a scheduled ECS Fargate task built from `Dockerfile.archival`. The task definition template is at [`ecs/archival-task-definition.json`](../../ecs/archival-task-definition.json). All secrets are sourced from AWS Secrets Manager — no plaintext values in the task definition.
 
-The task's IAM role provides S3 credentials, so `S3_ACCESS_KEY` and `S3_SECRET_KEY` are not needed. The scheduled task calls the compiled entrypoint directly and never touches the npm scripts above.
+The task's IAM role provides S3 credentials, so `S3_ACCESS_KEY` and `S3_SECRET_KEY` are not needed. The scheduled task calls the compiled entrypoint directly and never touches the pnpm scripts above.

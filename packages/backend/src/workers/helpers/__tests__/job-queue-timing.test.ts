@@ -1,5 +1,4 @@
 import type { IActionJobData } from '@plumber/types'
-
 import { type JobPro } from '@taskforcesh/bullmq-pro'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,6 +17,7 @@ function makeJob(
 
 describe('getJobQueueTimingTags', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

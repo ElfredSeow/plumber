@@ -1,5 +1,4 @@
 import { IExecutionStepMetadata, IJSONObject } from '@plumber/types'
-
 import { raw } from 'objection'
 
 import appConfig from '@/config/app'
@@ -14,13 +13,13 @@ class ExecutionStep extends Base {
   stepId!: string
   dataIn!: IJSONObject
   dataOut!: IJSONObject
-  errorDetails: IJSONObject
-  status: 'success' | 'failure'
-  appKey: string
-  jobId: string
-  step: Step
-  metadata: IExecutionStepMetadata
-  key: string
+  errorDetails?: IJSONObject | null
+  status!: 'success' | 'failure'
+  appKey?: string | null
+  jobId?: string
+  step!: Step
+  metadata!: IExecutionStepMetadata
+  key?: string | null
   execution?: Execution
 
   static tableName = 'execution_steps'

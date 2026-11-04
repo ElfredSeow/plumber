@@ -1,6 +1,5 @@
 // Avoid cyclic imports when importing gathersgApp
 import '@/apps'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import gathersgApp from '..'
@@ -21,6 +20,7 @@ vi.mock('@/models/step', () => ({
 
 describe('Queue config', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

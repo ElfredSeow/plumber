@@ -1,5 +1,4 @@
 import { IFlowCollabRole, IGlobalVariable } from '@plumber/types'
-
 import { Transaction } from 'objection'
 
 import { ForbiddenError } from '@/errors/graphql-errors'
@@ -23,7 +22,7 @@ class FlowCollaborator extends Base {
 
   // Virtual field for GraphQL compatibility - populated by custom resolver
   // Email is guaranteed to be available when user relation is loaded
-  email: string
+  email!: string
 
   static tableName = 'flow_collaborators'
 

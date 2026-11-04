@@ -1,5 +1,6 @@
 {
   "name": "@plumber/langfuse-tools",
+  "private": true,
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -9,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@langfuse/client": "4.2.0"
+    "@langfuse/client": "4.2.0",
+    "@opentelemetry/api": "catalog:"
   }
 }

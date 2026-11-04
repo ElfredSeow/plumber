@@ -1,14 +1,13 @@
-import type { IApp, IStep, ITestConnectionOutput } from '@plumber/types'
-
-import { useContext, useMemo } from 'react'
-import { BiLink, BiRefresh, BiSolidCircle } from 'react-icons/bi'
 import { useQuery } from '@apollo/client'
 import { Flex, Icon, Text, Tooltip } from '@chakra-ui/react'
 import { Button, Link } from '@opengovsg/design-system-react'
+import type { IApp, IStep, ITestConnectionOutput } from '@plumber/types'
+import { useContext, useMemo } from 'react'
+import { BiLink, BiRefresh, BiSolidCircle } from 'react-icons/bi'
 
 import { EditorContext } from '@/contexts/Editor'
 import { TEST_CONNECTION } from '@/graphql/queries/test-connection'
-import { FORMSG_APP_KEY } from '@/helpers/formsg'
+import { FORMSG_APP_KEY, MRF_ACTION_KEY } from '@/helpers/formsg'
 import useAuthentication from '@/hooks/useAuthentication'
 
 import { NON_EDITABLE_APP_CONNECTIONS } from '../Editor/constants'
@@ -99,13 +98,17 @@ function ChooseConnectionSubstep(
   const supportsConnectionRegistration =
     !!application.auth?.connectionRegistrationType
 
+  const isMrfSubtrigger =
+    step.appKey === FORMSG_APP_KEY && step.key === MRF_ACTION_KEY
   const isEditConnectionDisabled =
     readOnly ||
+    isMrfSubtrigger ||
     (flow.role !== 'owner' &&
       NON_EDITABLE_APP_CONNECTIONS.includes(application.key))
   const shouldShowReconnectTooltip =
-    flow.role === 'editor' &&
-    NON_EDITABLE_APP_CONNECTIONS.includes(application.key)
+    isMrfSubtrigger ||
+    (flow.role === 'editor' &&
+      NON_EDITABLE_APP_CONNECTIONS.includes(application.key))
 
   const { loading: testResultLoading, data: testConnectionData } = useQuery<{
     testConnection: ITestConnectionOutput
@@ -228,11 +231,15 @@ function ChooseConnectionSubstep(
         </Flex>
 
         <Tooltip
-          label="Only the Pipe owner can reconnect this app"
+          label={
+            isMrfSubtrigger
+              ? 'Reconnect or change the form at step 1'
+              : 'Only the Pipe owner can reconnect this app'
+          }
           hasArrow
           isDisabled={!shouldShowReconnectTooltip}
         >
-          <span>
+          <span tabIndex={isMrfSubtrigger ? 0 : undefined}>
             <Button
               variant="clear"
               colorScheme="secondary"
@@ -240,6 +247,10 @@ function ChooseConnectionSubstep(
               leftIcon={connection ? <BiRefresh /> : <BiLink />}
               onClick={onReconnect}
               isDisabled={isEditConnectionDisabled}
+              _disabled={{
+                color: 'interaction.support.disabled-content',
+                cursor: 'not-allowed',
+              }}
             >
               {connection ? 'Reconnect' : 'Connect'}
             </Button>

@@ -1,6 +1,11 @@
+import { makeExecutableSchema } from '@graphql-tools/schema'
+import { GraphQLResolveInfo, GraphQLSchema } from 'graphql'
+import { applyMiddleware } from 'graphql-middleware'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { setCurrentUserContext } from '../authentication'
+import { UnauthorisedError } from '@/errors/graphql-errors'
+
+import authentication, { setCurrentUserContext } from '../authentication'
 
 const mocks = vi.hoisted(() => ({
   getAdminTokenUser: vi.fn(),
@@ -16,6 +21,7 @@ vi.mock('@/helpers/auth', () => ({
 
 describe('GraphQL Authentication', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -35,15 +41,113 @@ describe('GraphQL Authentication', () => {
           },
         },
       } as unknown as any)
-      expect(mocks.parseAdminToken).toBeCalled()
-      expect(mocks.getAdminTokenUser).toBeCalled()
+      expect(mocks.parseAdminToken).toHaveBeenCalled()
+      expect(mocks.getAdminTokenUser).toHaveBeenCalled()
       expect(result.currentUser.id).toEqual('test-user-id')
     })
 
     it('does not invoke admin-related functions if admin header not set', async () => {
       await setCurrentUserContext({ req: { headers: {} } } as unknown as any)
-      expect(mocks.parseAdminToken).not.toBeCalled()
-      expect(mocks.getAdminTokenUser).not.toBeCalled()
+      expect(mocks.parseAdminToken).not.toHaveBeenCalled()
+      expect(mocks.getAdminTokenUser).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('admin mutation allowlist', () => {
+    const typeDefs = /* GraphQL */ `
+      type Query {
+        healthcheck: Boolean
+        getTable: Boolean
+        getAllRows: Boolean
+        getCurrentUser: Boolean
+        getPlumberStats: Boolean
+      }
+      type Mutation {
+        upsertFlowCollaborator: Boolean
+        createFlowTransfer: Boolean
+        deleteFlow: Boolean
+        retryPartialStep: Boolean
+        retryExecutionStep: Boolean
+        bulkRetryExecutions: Boolean
+        updateFlowStatus: Boolean
+        requestOtp: Boolean
+        verifyOtp: Boolean
+        loginWithSgid: Boolean
+        loginWithSelectedSgid: Boolean
+        startSsoLogin: Boolean
+        loginWithSso: Boolean
+        verifyTableViewPassword: Boolean
+        admin: Boolean
+      }
+      type AdminQuery {
+        _unused: Boolean
+      }
+      type AdminMutation {
+        _unused: Boolean
+      }
+    `
+
+    function executableSchema(resolvers: {
+      upsertFlowCollaborator: () => boolean
+      createFlowTransfer: () => boolean
+      deleteFlow: () => boolean
+    }) {
+      const schema = makeExecutableSchema({
+        typeDefs,
+        resolvers: {
+          Query: { healthcheck: () => true },
+          Mutation: resolvers,
+        },
+      })
+      return applyMiddleware(schema, authentication.generate(schema))
+    }
+
+    async function runMutation(
+      schema: GraphQLSchema,
+      fieldName: string,
+      contextValue: Record<string, unknown>,
+    ) {
+      const field = schema.getMutationType()?.getFields()[fieldName]
+      if (!field?.resolve) {
+        throw new Error(`Missing resolver for ${fieldName}`)
+      }
+      return field.resolve(null, {}, contextValue, {
+        fieldName,
+      } as GraphQLResolveInfo)
+    }
+
+    it('allows an admin operation to upsert a flow collaborator', async () => {
+      const upsertFlowCollaborator = vi.fn(() => true)
+      const schema = executableSchema({
+        upsertFlowCollaborator,
+        createFlowTransfer: () => true,
+        deleteFlow: () => true,
+      })
+
+      const result = await runMutation(schema, 'upsertFlowCollaborator', {
+        currentUser: { id: 'admin-user' },
+        isAdminOperation: true,
+      })
+
+      expect(result).toBe(true)
+      expect(upsertFlowCollaborator).toHaveBeenCalledOnce()
+    })
+
+    it('still blocks other mutations for an admin operation', async () => {
+      const deleteFlow = vi.fn(() => true)
+      const schema = executableSchema({
+        upsertFlowCollaborator: () => true,
+        createFlowTransfer: () => true,
+        deleteFlow,
+      })
+
+      const result = await runMutation(schema, 'deleteFlow', {
+        currentUser: { id: 'admin-user' },
+        isAdminOperation: true,
+      })
+
+      expect(result).toBeInstanceOf(UnauthorisedError)
+      expect(deleteFlow).not.toHaveBeenCalled()
     })
   })
 })

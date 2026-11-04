@@ -1,5 +1,6 @@
 import { ValidationError } from 'objection'
 import { describe, expect, it, vi } from 'vitest'
+import type { z } from 'zod/v4'
 
 vi.mock('@/services/mcp/apps', () => ({
   listAppsService: vi.fn().mockReturnValue([]),
@@ -26,7 +27,10 @@ vi.mock('@/services/mcp/add-tile-columns', () => ({
     skipped: [],
   }),
 }))
-vi.mock('@/services/mcp/create-flow-with-steps', () => ({
+vi.mock('@/services/mcp/create-flow-with-steps', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@/services/mcp/create-flow-with-steps')
+  >()),
   createFlowWithStepsService: vi
     .fn()
     .mockResolvedValue({ id: 'f1', name: 'My Pipe', steps: [] }),
@@ -38,6 +42,11 @@ vi.mock('@/services/mcp/update-step-parameters', () => ({
 }))
 vi.mock('@/services/mcp/create-step', () => ({
   createStepService: vi.fn().mockResolvedValue({ id: 's2', appKey: 'slack' }),
+}))
+vi.mock('@/services/mcp/get-flow', () => ({
+  getFlowService: vi
+    .fn()
+    .mockResolvedValue({ id: 'f1', name: 'My Pipe', active: false, steps: [] }),
 }))
 vi.mock('@/services/mcp/delete-step', () => ({
   deleteStepService: vi.fn().mockResolvedValue({ id: 'f1', steps: [] }),
@@ -77,6 +86,7 @@ vi.mock('@/helpers/logger', () => ({
 }))
 
 import { UserFacingError } from '@/errors/user-facing-error'
+import { MrfPipeStepsError } from '@/services/mcp/add-mrf-actions'
 import { addTileColumnsService } from '@/services/mcp/add-tile-columns'
 import { listAppsService } from '@/services/mcp/apps'
 import { createFlowWithStepsService } from '@/services/mcp/create-flow-with-steps'
@@ -84,6 +94,7 @@ import { createStepService } from '@/services/mcp/create-step'
 import { createTileService } from '@/services/mcp/create-tile'
 import { deleteStepService } from '@/services/mcp/delete-step'
 import { executeStepService } from '@/services/mcp/execute-step'
+import { getFlowService } from '@/services/mcp/get-flow'
 import { getFormSchemaService } from '@/services/mcp/get-form-schema'
 import { listColumnsService } from '@/services/mcp/list-columns'
 import { PublishedPipeError } from '@/services/mcp/published-pipe-error'
@@ -102,6 +113,7 @@ describe('createMcpBridgeTools', () => {
     expect(Object.keys(tools)).toEqual([
       'list_apps',
       'list_columns',
+      'get_flow',
       'create_tile',
       'add_tile_columns',
       'create_pipe',
@@ -478,6 +490,41 @@ describe('createMcpBridgeTools', () => {
     })
   })
 
+  it('create_step passes approval_branch through to createStepService as approvalBranch', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.create_step.execute(
+      {
+        pipe_id: 'flow-1',
+        app_key: 'postman',
+        action_key: 'sendTransactionalEmail',
+        previous_step_id: 'mrf-approval-step',
+        approval_branch: { branch: 'reject', step_id: 'mrf-approval-step' },
+      },
+      { toolCallId: 'create_step', messages: [] },
+    )
+    expect(vi.mocked(createStepService)).toHaveBeenCalledWith({
+      user: mockUser,
+      pipeId: 'flow-1',
+      appKey: 'postman',
+      key: 'sendTransactionalEmail',
+      previousStepId: 'mrf-approval-step',
+      traceId: mockTraceId,
+      approvalBranch: { branch: 'reject', stepId: 'mrf-approval-step' },
+    })
+  })
+
+  it('get_flow calls getFlowService with camelCase args', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.get_flow.execute(
+      { pipe_id: 'flow-1' },
+      { toolCallId: 'get_flow', messages: [] },
+    )
+    expect(vi.mocked(getFlowService)).toHaveBeenCalledWith({
+      user: mockUser,
+      pipeId: 'flow-1',
+    })
+  })
+
   it('delete_step calls deleteStepService with camelCase args', async () => {
     const tools = createMcpBridgeTools(mockUser, mockTraceId)
     await tools.delete_step.execute(
@@ -554,6 +601,74 @@ describe('createMcpBridgeTools', () => {
     })
   })
 
+  it('create_pipe passes form_url through as formUrl', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.create_pipe.execute(
+      {
+        name: 'MRF Pipe',
+        steps: [{ app_key: 'formsg', trigger_key: 'newSubmission' }],
+        form_url: 'https://form.gov.sg/6abcb1affb28842bc7a9e6ce',
+      },
+      { toolCallId: 'create_pipe', messages: [] },
+    )
+    expect(vi.mocked(createFlowWithStepsService)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formUrl: 'https://form.gov.sg/6abcb1affb28842bc7a9e6ce',
+      }),
+    )
+  })
+
+  it('create_pipe passes mrf_stage and mrf_branch through as mrfStage and mrfBranch', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.create_pipe.execute(
+      {
+        name: 'MRF Pipe',
+        steps: [
+          { app_key: 'formsg', trigger_key: 'newSubmission' },
+          {
+            app_key: 'postman',
+            action_key: 'sendTransactionalEmail',
+            mrf_stage: 2,
+            mrf_branch: 'reject',
+          },
+        ],
+        form_url: 'https://form.gov.sg/6abcb1affb28842bc7a9e6ce',
+      },
+      { toolCallId: 'create_pipe', messages: [] },
+    )
+    expect(vi.mocked(createFlowWithStepsService)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({ appKey: 'formsg', type: 'trigger' }),
+          expect.objectContaining({
+            appKey: 'postman',
+            mrfStage: 2,
+            mrfBranch: 'reject',
+          }),
+        ],
+      }),
+    )
+  })
+
+  it('create_pipe still reports the pipe when a later MRF step fails', async () => {
+    vi.mocked(createFlowWithStepsService).mockRejectedValueOnce(
+      new MrfPipeStepsError('Could not add a step.', 'f-partial'),
+    )
+    const onPipeChange = vi.fn()
+    const tools = createMcpBridgeTools(mockUser, mockTraceId, onPipeChange)
+
+    await expect(
+      tools.create_pipe.execute(
+        {
+          name: 'MRF Pipe',
+          steps: [{ app_key: 'formsg', trigger_key: 'newSubmission' }],
+        },
+        { toolCallId: 'create_pipe', messages: [] },
+      ),
+    ).rejects.toThrow('Could not add a step.')
+    expect(onPipeChange).toHaveBeenCalledWith('f-partial')
+  })
+
   it('create_pipe forwards parameters when present on a step', async () => {
     const tools = createMcpBridgeTools(mockUser, mockTraceId)
     await tools.create_pipe.execute(
@@ -589,6 +704,85 @@ describe('createMcpBridgeTools', () => {
         },
       ],
       traceId: mockTraceId,
+    })
+  })
+
+  it('create_pipe flattens the steps nested inside an ifThen into an explicit If block', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.create_pipe.execute(
+      {
+        name: 'Block Pipe',
+        steps: [
+          { app_key: 'formsg', trigger_key: 'newSubmission' },
+          {
+            app_key: 'toolbox',
+            action_key: 'ifThen',
+            parameters: { branchName: 'Urgent' },
+            steps: [
+              { app_key: 'slack', action_key: 'sendMessageToChannel' },
+              { app_key: 'postman-sms', action_key: 'sendSms' },
+            ],
+          },
+          { app_key: 'postman', action_key: 'sendTransactionalEmail' },
+        ],
+      },
+      { toolCallId: 'create_pipe', messages: [] },
+    )
+    const { steps } = vi.mocked(createFlowWithStepsService).mock.lastCall![0]
+    expect(steps.map((step) => step.key)).toEqual([
+      'newSubmission',
+      'ifThen',
+      'sendMessageToChannel',
+      'sendSms',
+      'sendTransactionalEmail',
+    ])
+    expect(steps[1]).toMatchObject({
+      position: 2,
+      parameters: { branchName: 'Urgent' },
+      ifThenChildCount: 2,
+    })
+  })
+
+  it('create_pipe exposes If block nesting and guidance by default', () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    const parsed = (tools.create_pipe.inputSchema as z.ZodType).parse({
+      name: 'Block Pipe',
+      steps: [
+        { app_key: 'formsg', trigger_key: 'newSubmission' },
+        {
+          app_key: 'toolbox',
+          action_key: 'ifThen',
+          steps: [{ app_key: 'slack', action_key: 'sendMessageToChannel' }],
+        },
+      ],
+    }) as { steps: Record<string, unknown>[] }
+
+    expect(parsed.steps[1].steps).toEqual([
+      { app_key: 'slack', action_key: 'sendMessageToChannel' },
+    ])
+    expect(tools.create_pipe.description).toContain('If block')
+  })
+
+  it('create_step forwards after_if_then_block', async () => {
+    const tools = createMcpBridgeTools(mockUser, mockTraceId)
+    await tools.create_step.execute(
+      {
+        pipe_id: 'flow-1',
+        app_key: 'slack',
+        action_key: 'sendMessageToChannel',
+        previous_step_id: 'step-0',
+        after_if_then_block: true,
+      },
+      { toolCallId: 'create_step', messages: [] },
+    )
+    expect(vi.mocked(createStepService)).toHaveBeenCalledWith({
+      user: mockUser,
+      pipeId: 'flow-1',
+      appKey: 'slack',
+      key: 'sendMessageToChannel',
+      previousStepId: 'step-0',
+      traceId: mockTraceId,
+      afterIfThenBlock: true,
     })
   })
 

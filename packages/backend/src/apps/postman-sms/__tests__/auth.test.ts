@@ -1,10 +1,7 @@
 import type { IGlobalVariable } from '@plumber/types'
-
-import type { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import HttpError from '@/errors/http'
-
+import { makeHttpError } from '../../../../test/utils/make-http-error'
 import isStillVerified from '../auth/is-still-verified'
 import verifyCredentials from '../auth/verify-credentials'
 import { PostmanEnv } from '../common/constants'
@@ -35,6 +32,7 @@ describe('Postman SMS auth', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -59,7 +57,7 @@ describe('Postman SMS auth', () => {
       mocks.getPostmanEnv.mockReturnValue(PostmanEnv.Test)
 
       await verifyCredentials($)
-      expect(mocks.authSet).toBeCalledWith(
+      expect(mocks.authSet).toHaveBeenCalledWith(
         expect.objectContaining({
           screenName: '[TEST] My Campaign',
         }),
@@ -71,14 +69,14 @@ describe('Postman SMS auth', () => {
       mocks.getPostmanEnv.mockReturnValue(PostmanEnv.Test)
 
       await verifyCredentials($)
-      expect(mocks.authSet).not.toBeCalled()
+      expect(mocks.authSet).not.toHaveBeenCalled()
     })
 
     it('Does not modify the label for campaigns in prod', async () => {
       mocks.getPostmanEnv.mockReturnValue(PostmanEnv.Prod)
 
       await verifyCredentials($)
-      expect(mocks.authSet).not.toBeCalled()
+      expect(mocks.authSet).not.toHaveBeenCalled()
     })
   })
 
@@ -98,67 +96,57 @@ describe('Postman SMS auth', () => {
 
     it("throws descriptive error message if user did not whitelist Plumber's IPs", async () => {
       mocks.httpGet.mockRejectedValue(
-        new HttpError({
-          response: {
-            status: 400,
-            data: {
-              error: {
-                code: 'invalid_ip_address_used',
-              },
+        makeHttpError({
+          status: 400,
+          data: {
+            error: {
+              code: 'invalid_ip_address_used',
             },
           },
-        } as AxiosError),
+        }),
       )
 
-      await expect(isStillVerified($)).rejects.toThrowError(
+      await expect(isStillVerified($)).rejects.toThrow(
         "Plumber's IPs are not whitelisted in your campaign",
       )
     })
 
     it('throws descriptive error message if user provided wrong campaign ID or API key', async () => {
       mocks.httpGet.mockRejectedValue(
-        new HttpError({
-          response: {
-            status: 401,
-          },
-        } as AxiosError),
+        makeHttpError({
+          status: 401,
+        }),
       )
 
-      await expect(isStillVerified($)).rejects.toThrowError(
+      await expect(isStillVerified($)).rejects.toThrow(
         'Provided API key is not for the provided campaign',
       )
     })
 
     it.each([
       new Error('non-http error'),
-      new HttpError({
-        response: {
-          status: 500,
-        },
-      } as AxiosError),
-      new HttpError({
-        response: {
-          status: 400,
-          data: {
-            error: {
-              code: 'some_weird_code',
-            },
+      makeHttpError({
+        status: 500,
+      }),
+      makeHttpError({
+        status: 400,
+        data: {
+          error: {
+            code: 'some_weird_code',
           },
         },
-      } as AxiosError),
-      new HttpError({
-        response: {
-          status: 400,
-          data: {
-            // Missing error
-          },
+      }),
+      makeHttpError({
+        status: 400,
+        data: {
+          // Missing error
         },
-      } as AxiosError),
+      }),
     ])(
       'throws the underlying error if request failed due to another reason',
       async (error) => {
         mocks.httpGet.mockRejectedValue(error)
-        await expect(isStillVerified($)).rejects.toThrowError(error)
+        await expect(isStillVerified($)).rejects.toThrow(error)
       },
     )
   })

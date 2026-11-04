@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StepError from '@/errors/step'
@@ -27,6 +26,7 @@ describe('perform calculation', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -111,7 +111,7 @@ describe('perform calculation', () => {
     async ({ params, expectedResult }) => {
       $.step.parameters = params
       await roundtoDecimalPlacesAction.run($)
-      expect(mocks.setActionItem).toBeCalledWith({
+      expect(mocks.setActionItem).toHaveBeenCalledWith({
         raw: { result: expectedResult },
       })
     },

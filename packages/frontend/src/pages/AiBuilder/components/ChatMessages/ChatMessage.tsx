@@ -1,5 +1,5 @@
-import { memo } from 'react'
 import { Box, Flex, Text } from '@chakra-ui/react'
+import { memo } from 'react'
 
 import { Message } from '@/hooks/useChatStream'
 import {
@@ -70,7 +70,6 @@ const ChatMessage = memo(
     shouldShowToolbar: boolean
   }) => {
     if (message.isUser) {
-      // System cue for the LLM, not a real user reply — never rendered.
       if (isNoOptionsSignalMessage(message.text)) {
         return null
       }

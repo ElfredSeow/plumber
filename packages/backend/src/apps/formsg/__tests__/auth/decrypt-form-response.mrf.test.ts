@@ -1,12 +1,10 @@
 import { IGlobalVariable, IRequest } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import apps from '@/apps'
 
 import { decryptFormResponse } from '../../auth/decrypt-form-response'
 import type { FormsgPayloadWorkflowContent } from '../../common/types'
-
 import {
   exampleV4Submission,
   makeExampleV4FormSchema,
@@ -147,7 +145,7 @@ function makeGlobalVariable(): IGlobalVariable {
       updatedAt: `${new Date().getTime()}`,
     },
     app: apps.formsg,
-  }
+  } as unknown as IGlobalVariable
 }
 
 describe('decrypt form response - MRF specific', () => {
@@ -158,6 +156,7 @@ describe('decrypt form response - MRF specific', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

@@ -2,7 +2,6 @@
  * Feature flags
  */
 export const AI_BUILDER_FEATURE_FLAG = 'ai-builder'
-export const TEMPLATE_SEARCH_FEATURE_FLAG = 'template-search'
 
 /**
  * Gates first-time logins for domains we need to temporarily turn away. The
@@ -13,23 +12,15 @@ export const TEMPLATE_SEARCH_FEATURE_FLAG = 'template-search'
 export const BLOCK_NEW_LOGINS_FLAG = 'block-new-logins'
 
 /**
- * Staged rollout for routing m365-excel's createTableRow (the only
- * batch-enabled action today) into its dedicated batch queue:
- * - 'ogp': only flows owned by an @open.gov.sg user are routed to the batch
- *   queue (internal dogfooding).
- * - 'all': every flow is routed to the batch queue (general availability).
- * - 'off': kill switch; falls back to the per-app queue for everyone.
- * Defaults to 'off' when the flag can't be evaluated (missing, or
- * LaunchDarkly unreachable), so an LD outage can't silently re-enable
- * batching.
- */
-export const M365_EXCEL_BATCH_ROLLOUT_FLAG = 'm365-excel-batch-rollout'
-export type M365ExcelBatchRolloutState = 'ogp' | 'all' | 'off'
-
-/**
  * App flags regex
  */
 export const APP_FLAG_REGEX = /^app_.*$/
+
+/** Server keys the chat route can connect. Add a key when a new connector ships. */
+export const GITBOOK_MCP_SERVER = 'gitbook' as const
+export const MCP_SERVER_NAMES = [GITBOOK_MCP_SERVER] as const
+
+export type McpServerName = (typeof MCP_SERVER_NAMES)[number]
 
 /**
  * Feature flag fallbacks
@@ -40,5 +31,6 @@ export const AI_BUILDER_FEATURE_FLAG_FALLBACK = {
     chatPromptName: 'chat',
     chatSummaryPromptName: 'chat-summary',
     version: 'production',
+    disabledMcpServers: [] as McpServerName[],
   },
 }

@@ -14,6 +14,8 @@ const baseActionSchema = z.object({
   config: z.object({
     stepName: z.string().min(1).max(64),
   }),
+  // Preview only. Marks an action that runs when an approval stage rejects.
+  approvalBranch: z.literal('reject').optional(),
 })
 
 export const ifThenParametersSchema = z.object({
@@ -21,11 +23,64 @@ export const ifThenParametersSchema = z.object({
   branchName: z.string().default('Branch'),
 })
 
-function getActionSchema(restrictedAppKeys: string[] = []) {
+/**
+ * Number of steps inside an If block, when the caller lays blocks out
+ * explicitly. Absent means the legacy derived extent: every step up to the
+ * next if-then or the end of the pipe.
+ */
+export const ifThenChildCountSchema = z.number().int().min(1).optional()
+
+interface LayoutStep {
+  appKey?: string | null
+  key?: string | null
+  ifThenChildCount?: number
+  isApproval?: boolean
+  approvalBranch?: 'reject'
+}
+
+function isIfThenLayoutStep(step: LayoutStep | undefined): boolean {
+  return (
+    step?.appKey === TOOLBOX_APP_KEY && step?.key === TOOLBOX_ACTIONS.IF_THEN
+  )
+}
+
+function isForEachLayoutStep(step: LayoutStep | undefined): boolean {
+  return (
+    step?.appKey === TOOLBOX_APP_KEY && step?.key === TOOLBOX_ACTIONS.FOR_EACH
+  )
+}
+
+/**
+ * Number of steps inside the If block that starts at `index`. An explicit
+ * `ifThenChildCount` wins over the legacy derived extent.
+ */
+export function getIfThenChildCount(
+  steps: LayoutStep[],
+  index: number,
+): number {
+  const explicit = steps[index]?.ifThenChildCount
+  if (explicit !== undefined) {
+    return explicit
+  }
+  let count = 0
+  for (let i = index + 1; i < steps.length; i++) {
+    if (isIfThenLayoutStep(steps[i])) {
+      break
+    }
+    count++
+  }
+  return count
+}
+
+function getActionSchema(
+  restrictedAppKeys: string[] = [],
+  options: { includeHidden?: boolean } = {},
+) {
   const generatedSchema = generateSchema(
     baseActionSchema,
     'action',
     restrictedAppKeys,
+    options,
   )
 
   return generatedSchema.refine(validateActionParameters, {
@@ -34,9 +89,12 @@ function getActionSchema(restrictedAppKeys: string[] = []) {
   })
 }
 
-export function getActionsSchema(restrictedAppKeys: string[] = []) {
+export function getActionsSchema(
+  restrictedAppKeys: string[] = [],
+  options: { includeHidden?: boolean } = {},
+) {
   return z
-    .array(getActionSchema(restrictedAppKeys))
+    .array(getActionSchema(restrictedAppKeys, options))
     .min(1, 'At least one action step is required.')
     .max(29) // max of 30 steps including trigger
     .superRefine(validateActionStepsRules)
@@ -61,32 +119,139 @@ export function validateActionParameters(data: any): boolean {
 
 /**
  * Reusable validation function for action steps that enforces:
- * 1. Only 1 for-each per pipe
- * 2. For-each cannot be anywhere after if-then
- * 3. If-then must have action after it (no consecutive if-then)
- * 4. Delay cannot be after for-each
+ * 1. Every If block contains at least one step
+ * 2. If blocks do not nest
+ * 3. For-each cannot sit inside an If block
+ * 4. A rejected-path action follows an approval stage
+ * 5. The execution path rules in `validateExecutionPathRules`, on each
+ *    approval path
+ *
+ * An If block's extent comes from `getIfThenChildCount`, so a legacy flat
+ * list (no `ifThenChildCount`) still fails the old way: a for-each after an
+ * if-then is inside that block, and back-to-back if-thens leave one empty.
  */
-export function validateActionStepsRules(steps: any[], ctx: z.RefinementCtx) {
-  let forEachCount = 0
-  let lastForEachIndex = -1
-  let hasSeenIfThen = false
+export function validateActionStepsRules(
+  steps: LayoutStep[],
+  ctx: z.RefinementCtx,
+) {
+  validateBlockRules(steps, ctx)
+  for (const path of getApprovalPaths(steps)) {
+    validateExecutionPathRules(path, ctx)
+  }
+}
+
+/**
+ * Splits the steps into the paths that can run. A rejected path runs the
+ * approved steps up to its approval stage, then its own rejected steps.
+ */
+function getApprovalPaths(steps: LayoutStep[]): LayoutStep[][] {
+  const approvePath: LayoutStep[] = []
+  const rejectPaths: LayoutStep[][] = []
+  let stagePath: LayoutStep[] = []
+  let rejectPath: LayoutStep[] | undefined
+
+  for (const step of steps) {
+    if (step.approvalBranch === 'reject') {
+      if (!rejectPath) {
+        rejectPath = [...stagePath]
+        rejectPaths.push(rejectPath)
+      }
+      rejectPath.push(step)
+      continue
+    }
+    approvePath.push(step)
+    if (step.isApproval) {
+      stagePath = [...approvePath]
+      rejectPath = undefined
+    }
+  }
+
+  return [approvePath, ...rejectPaths]
+}
+
+/**
+ * The rules that hold however the steps execute. Pair it with
+ * `validateExecutionPathRules` on each path when steps can take separate paths.
+ */
+export function validateBlockRules(steps: LayoutStep[], ctx: z.RefinementCtx) {
+  // The latest MRF stage entry decides whether a rejected-path action has an
+  // approval stage to belong to.
+  let lastStageIsApproval = false
+  // Index just past the If block being scanned, or -1 outside any block.
+  let blockEndExclusive = -1
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]
-    const nextStep = i < steps.length - 1 ? steps[i + 1] : null
+    const isInsideBlock = i < blockEndExclusive
 
-    const isIfThen =
-      step.appKey === TOOLBOX_APP_KEY && step.key === TOOLBOX_ACTIONS.IF_THEN
+    if (step.appKey === 'formsg' && step.key === 'mrfSubmission') {
+      lastStageIsApproval = step.isApproval === true
+    }
 
-    // Count for-each actions and track last position
-    if (
-      step.appKey === TOOLBOX_APP_KEY &&
-      step.key === TOOLBOX_ACTIONS.FOR_EACH
-    ) {
+    if (step.approvalBranch === 'reject' && !lastStageIsApproval) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'A rejected-path action must come after an approval stage of the form',
+        path: [i],
+      })
+    }
+
+    if (isIfThenLayoutStep(step)) {
+      if (isInsideBlock) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'If blocks cannot be nested inside another If block',
+          path: [i],
+        })
+      }
+
+      const childCount = getIfThenChildCount(steps, i)
+      if (childCount === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cannot have empty If block',
+          path: [i],
+        })
+      } else if (i + childCount >= steps.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'If block extends past the last step of the pipe',
+          path: [i],
+        })
+      }
+
+      if (!isInsideBlock) {
+        blockEndExclusive = i + 1 + childCount
+      }
+    }
+
+    if (isForEachLayoutStep(step) && isInsideBlock) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'For-each action cannot be placed inside an If block',
+        path: [i],
+      })
+    }
+  }
+}
+
+/**
+ * The rules for steps that run one after another:
+ * 1. Only 1 for-each per pipe
+ * 2. Delay cannot be after for-each
+ */
+export function validateExecutionPathRules(
+  steps: LayoutStep[],
+  ctx: z.RefinementCtx,
+) {
+  let forEachCount = 0
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+
+    if (isForEachLayoutStep(step)) {
       forEachCount++
-      lastForEachIndex = i
-
-      // Rule: Only 1 for-each per pipe
       if (forEachCount > 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -94,45 +259,9 @@ export function validateActionStepsRules(steps: any[], ctx: z.RefinementCtx) {
           path: [i],
         })
       }
-
-      // Rule: for-each cannot be anywhere after any if-then
-      if (hasSeenIfThen) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'For-each action cannot be placed after an if-then action',
-          path: [i],
-        })
-      }
     }
 
-    // Track if we've seen any if-then action
-    if (isIfThen) {
-      hasSeenIfThen = true
-
-      // Rule: if-then must have a non-if-then action after it (no consecutive if-then actions)
-      const nextIsIfThen =
-        nextStep?.appKey === TOOLBOX_APP_KEY &&
-        nextStep?.key === TOOLBOX_ACTIONS.IF_THEN
-
-      if (!nextStep) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            'If-then actions must have another action immediately after them',
-          path: [i],
-        })
-      } else if (nextIsIfThen) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            'If-then actions cannot be consecutive - must alternate with non-if-then actions',
-          path: [i],
-        })
-      }
-    }
-
-    // Rule: delay action cannot be after for-each
-    if (step.appKey === 'delay' && lastForEachIndex >= 0) {
+    if (step.appKey === 'delay' && forEachCount > 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Delay action cannot be added after a for-each step',

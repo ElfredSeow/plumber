@@ -1,5 +1,4 @@
 import { IFlowCollabRole, IFlowConfig } from '@plumber/types'
-
 import type { ModelOptions, QueryContext, Transaction } from 'objection'
 import { ValidationError } from 'objection'
 
@@ -19,14 +18,14 @@ class Flow extends Base {
   id!: string
   name!: string
   userId!: string
-  active: boolean
-  steps: Step[]
-  publishedAt: string
-  remoteWebhookId: string
+  active!: boolean
+  steps!: Step[]
+  publishedAt?: string | null
+  remoteWebhookId?: string | null
   executions?: Execution[]
-  testExecutionId: string
+  testExecutionId?: string | null
   testExecution?: Execution
-  user: User
+  user!: User
   collaborators?: FlowCollaborator[]
   updatedBy?: string
 
@@ -37,7 +36,7 @@ class Flow extends Base {
   /**
    * Null means to use default config.
    */
-  config: IFlowConfig | null
+  config!: IFlowConfig | null
 
   static tableName = 'flows'
 
@@ -222,9 +221,13 @@ class Flow extends Base {
   }
 
   async getTriggerStep(): Promise<Step> {
-    return await this.$relatedQuery('steps').findOne({
+    const triggerStep = await this.$relatedQuery('steps').findOne({
       type: 'trigger',
     })
+    if (!triggerStep) {
+      throw new Error(`Flow ${this.id} has no trigger step`)
+    }
+    return triggerStep
   }
 
   async containsFileProcessingActions(): Promise<boolean> {
@@ -260,6 +263,28 @@ class Flow extends Base {
       .whereNull('deleted_at')
 
     return collaborators.length > 0
+  }
+
+  /**
+   * IMPORTANT: Bypasses the model so updated_at stays unchanged. A bump would
+   * make assertNotUpdatedSince reject edits from collaborators with the Pipe open.
+   */
+  static async incrementDuplicateCount(
+    flowId: string,
+    trx: Transaction,
+  ): Promise<void> {
+    await trx(this.tableName)
+      .where('id', flowId)
+      .update({
+        config: trx.raw(
+          `jsonb_set(
+            COALESCE(config, '{}'::jsonb),
+            '{duplicateCount}',
+            to_jsonb(COALESCE(config->>'duplicateCount', '0')::int + 1),
+            true
+          )`,
+        ),
+      })
   }
 
   async patchLastUpdated({

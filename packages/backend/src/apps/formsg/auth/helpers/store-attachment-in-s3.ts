@@ -1,9 +1,8 @@
-import { IGlobalVariable } from '@plumber/types'
-
 import {
   DecryptedAttachments,
   FormField,
 } from '@opengovsg/formsg-sdk/dist/types'
+import { IGlobalVariable } from '@plumber/types'
 
 import {
   ATTACHMENT_TYPE,
@@ -32,6 +31,9 @@ async function storeAttachmentInS3(
   formField: Readonly<FormField>,
   attachments: Readonly<DecryptedAttachments> | null,
 ): Promise<string> {
+  if (!attachments) {
+    throw new Error('FormSG attachment map is missing')
+  }
   const attachment = attachments[formField._id]
   if (!attachment) {
     return ''

@@ -1,5 +1,4 @@
 import type { IGlobalVariable, IHttpClient } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import createHttpClient from '../http-client'
@@ -44,6 +43,7 @@ describe('Http client', () => {
     } as unknown as IGlobalVariable
   })
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

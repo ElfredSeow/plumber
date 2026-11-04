@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import type { AxiosPromise } from 'axios'
 import { Settings as LuxonSettings } from 'luxon'
 import {
@@ -22,18 +21,16 @@ LuxonSettings.defaultZone = 'Asia/Singapore'
 LuxonSettings.defaultLocale = 'en-SG'
 
 const mocks = vi.hoisted(() => ({
-  axiosRequestAdapter: vi.fn(
-    async (requestConfig): AxiosPromise => ({
-      data: {
-        createdAt: '2024-01-29T17:39:35.574+08:00',
-        id: 'test-message-id',
-      },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config: requestConfig,
-    }),
-  ),
+  axiosRequestAdapter: vi.fn(async (requestConfig): AxiosPromise => ({
+    data: {
+      createdAt: '2024-01-29T17:39:35.574+08:00',
+      id: 'test-message-id',
+    },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config: requestConfig,
+  })),
   setActionItem: vi.fn(),
   logError: vi.fn(),
   authDataParseResult: vi.fn(() => ({
@@ -168,15 +165,13 @@ describe('Send SMS Action', () => {
   it('errors out if recipient phone number is empty', async () => {
     $.step.parameters.recipient = '  '
     $.step.parameters.message = '12345'
-    await expect(sendSmsAction.run($)).rejects.toThrowError(
-      /Enter a phone number/,
-    )
+    await expect(sendSmsAction.run($)).rejects.toThrow(/Enter a phone number/)
   })
 
   it('errors out if recipient phone number is invalid', async () => {
     $.step.parameters.recipient = 'not a phone number'
     $.step.parameters.message = '12345'
-    await expect(sendSmsAction.run($)).rejects.toThrowError(
+    await expect(sendSmsAction.run($)).rejects.toThrow(
       /Enter a valid phone number/,
     )
   })
@@ -184,7 +179,7 @@ describe('Send SMS Action', () => {
   it('errors out if message is empty', async () => {
     $.step.parameters.recipient = '+6512345678'
     $.step.parameters.message = '   '
-    await expect(sendSmsAction.run($)).rejects.toThrowError(
+    await expect(sendSmsAction.run($)).rejects.toThrow(
       /Provide a non-empty message/,
     )
   })
@@ -192,7 +187,7 @@ describe('Send SMS Action', () => {
   it('errors out if message is too long', async () => {
     $.step.parameters.recipient = '+6512345678'
     $.step.parameters.message = '12345'.repeat(201)
-    await expect(sendSmsAction.run($)).rejects.toThrowError(
+    await expect(sendSmsAction.run($)).rejects.toThrow(
       /Message cannot exceed 1,000 characters/,
     )
   })
@@ -203,7 +198,7 @@ describe('Send SMS Action', () => {
 
     await sendSmsAction.run($)
 
-    expect(mocks.setActionItem).toBeCalledWith({
+    expect(mocks.setActionItem).toHaveBeenCalledWith({
       raw: {
         message: {
           createdAt: '2024-01-29T17:39:35.574+08:00',

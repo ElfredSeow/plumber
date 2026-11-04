@@ -1,5 +1,4 @@
 import { IGlobalVariable } from '@plumber/types'
-
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StepError from '@/errors/step'
@@ -88,13 +87,13 @@ describe.each([['ddb'], ['pg']])(
 
     it('should allow owners to update row', async () => {
       await expect(updateRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should allow editors to update row', async () => {
       $.user = editor
       await expect(updateRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should not allow viewers to update row', async () => {
@@ -143,7 +142,7 @@ describe.each([['ddb'], ['pg']])(
         { columnId: dummyColumnIds[0], cellValue: '123' },
       ]
       await updateRowAction.run($)
-      expect($.setActionItem).toBeCalledWith({
+      expect($.setActionItem).toHaveBeenCalledWith({
         raw: {
           rowId: row.rowId,
           updated: true,

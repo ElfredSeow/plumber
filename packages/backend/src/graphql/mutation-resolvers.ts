@@ -49,7 +49,7 @@ import verifyOtp from './mutations/verify-otp'
 /**
  * Want to create a new mutation or modify an existing mutation?
  * 1. Add/Change your mutation in graphql.schema.
- * 2. Run `npm run gqlc` to trigger codegen.
+ * 2. Run `pnpm run gqlc` to trigger codegen.
  * 3. Start implementing! You can reference the other mutation implementations
  *    to see how to type your mutation function.
  *
@@ -112,5 +112,5 @@ export default {
   // This is a special stub that enables us to group all our admin-related
   // mutations into a special AdminMutation object; each "mutation" is handled by field
   // resolvers defined in @/graphql/admin/mutations.
-  admin: () => ({} as AdminMutation),
+  admin: () => ({}) as AdminMutation,
 } satisfies MutationResolvers

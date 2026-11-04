@@ -1,38 +1,26 @@
+import { TileProps } from '@opengovsg/design-system-react'
 import { BiBookOpen, BiPlus, BiSolidMagicWand } from 'react-icons/bi'
-import { Box, Text } from '@chakra-ui/react'
-import { Tile, TileProps } from '@opengovsg/design-system-react'
 
 import NewBadge from '@/components/FlowStepConfigurationModal/ChooseAppAndEvent/NewBadge'
+import OptionTile from '@/components/OptionTile'
 
 const MODES = {
   ai: {
     title: 'Build with AI',
     description: "Describe your workflow and we'll create the steps for you",
-    icon: (
-      <Box py={2}>
-        <BiSolidMagicWand fontSize="2rem" />
-      </Box>
-    ),
+    icon: BiSolidMagicWand,
     isNew: true,
   },
   template: {
     title: 'Use a template',
     description: 'Choose from a pre-built workflow to customise',
-    icon: (
-      <Box py={2}>
-        <BiBookOpen fontSize="2rem" />
-      </Box>
-    ),
+    icon: BiBookOpen,
     isNew: false,
   },
   new: {
     title: 'Start from scratch',
     description: 'Use our builder to create your own workflow',
-    icon: (
-      <Box py={2}>
-        <BiPlus fontSize="2rem" />
-      </Box>
-    ),
+    icon: BiPlus,
     isNew: false,
   },
 }
@@ -47,16 +35,12 @@ export default function ModeTile(props: ModeTileProps) {
   const { icon, title, description, isNew } = MODES[mode]
 
   return (
-    <Tile
-      icon={() => icon}
-      flex={1}
-      {...(isNew && {
-        badge: <NewBadge variant="secondary" />,
-      })}
+    <OptionTile
+      icon={icon}
+      title={title}
+      description={description}
+      badge={isNew ? <NewBadge isCompact /> : undefined}
       {...rest}
-    >
-      <Text textStyle="subhead-1">{title}</Text>
-      <Text textStyle="body-2">{description}</Text>
-    </Tile>
+    />
   )
 }

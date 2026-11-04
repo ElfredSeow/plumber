@@ -6,7 +6,6 @@ import {
   IRequest,
   ITriggerItem,
 } from '@plumber/types'
-
 import { isEqual } from 'lodash'
 
 import appConfig from '@/config/app'
@@ -18,6 +17,7 @@ import Step from '@/models/step'
 import User from '@/models/user'
 
 import createHttpClient from './http-client'
+import { retryOnTransientDbError } from './retry-on-transient-db-error'
 
 type GlobalVariableOptions = {
   connection?: Connection
@@ -28,6 +28,7 @@ type GlobalVariableOptions = {
   testRun?: boolean
   request?: IRequest
   user?: User // only required in GraphQL context
+  loggedInUser?: User
   metadata?: IJSONObject
 }
 
@@ -43,15 +44,24 @@ const globalVariable = async (
     request,
     testRun = false,
     user,
+    loggedInUser,
     metadata,
   } = options
 
   const isTrigger = step?.isTrigger
-  const nextStep = await step?.getNextStep()
+  const nextStep = await retryOnTransientDbError(
+    async () => step?.getNextStep(),
+    {
+      context: { flowId: flow?.id, stepId: step?.id },
+    },
+  )
 
-  const $: IGlobalVariable = {
+  // http is attached below via mutation, since createHttpClient captures $ by
+  // reference for its (deferred, async) interceptors, and $ can't reference
+  // itself from within its own literal.
+  const $ = {
     auth: {
-      set: async (args: IJSONObject) => {
+      set: async (args: IJSONObject): Promise<null> => {
         const updatedAuthData = {
           ...$.auth.data,
           ...args,
@@ -78,7 +88,10 @@ const globalVariable = async (
       name: flow?.name,
       userId: flow?.userId,
       hasFileProcessingActions:
-        (await flow?.containsFileProcessingActions()) ?? false,
+        (await retryOnTransientDbError(
+          async () => flow?.containsFileProcessingActions(),
+          { context: { flowId: flow?.id } },
+        )) ?? false,
       isActive: flow?.active ?? false,
     },
     step: {
@@ -105,7 +118,9 @@ const globalVariable = async (
      *
      * For-each case: add the iteration number to get the correct execution step for steps in the for-each
      */
-    getLastExecutionStep: async (options) => {
+    getLastExecutionStep: async (
+      options: Parameters<IGlobalVariable['getLastExecutionStep']>[0],
+    ) => {
       if (options?.sameExecution && !execution?.id) {
         throw new Error('Execution ID is required to get last execution step')
       }
@@ -143,8 +158,9 @@ const globalVariable = async (
       $.actionOutput.data = actionItem
     },
     user: user ?? flow?.user,
+    loggedInUser,
     metadata,
-  }
+  } as unknown as IGlobalVariable
 
   if (request) {
     $.request = request

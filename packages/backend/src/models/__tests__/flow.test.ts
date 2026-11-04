@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+
 import { describe, expect, it } from 'vitest'
 
 import { BadUserInputError } from '@/errors/graphql-errors/bad-user-input'
@@ -29,9 +30,9 @@ describe('flow model', () => {
 
       const mismatched = String(updatedAt.getTime() + 1)
 
-      expect(() =>
-        flow.assertNotUpdatedSince(mismatched, updatedBy),
-      ).toThrowError(BadUserInputError)
+      expect(() => flow.assertNotUpdatedSince(mismatched, updatedBy)).toThrow(
+        BadUserInputError,
+      )
       expect(() => flow.assertNotUpdatedSince(mismatched, updatedBy)).toThrow(
         'This Pipe has been edited by another user. Please refresh the page to see the latest changes and try again.',
       )
@@ -45,7 +46,7 @@ describe('flow model', () => {
 
       expect(() =>
         flow.assertNotUpdatedSince('not-a-number', updatedBy),
-      ).toThrowError(BadUserInputError)
+      ).toThrow(BadUserInputError)
       expect(() =>
         flow.assertNotUpdatedSince('not-a-number', updatedBy),
       ).toThrow(

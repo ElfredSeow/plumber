@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import type { AxiosPromise } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,17 +7,15 @@ import globalVariable from '@/helpers/global-variable'
 import type Connection from '@/models/connection'
 
 const mocks = vi.hoisted(() => ({
-  axiosRequestAdapter: vi.fn(
-    async (requestConfig): AxiosPromise => ({
-      data: {
-        submission: {},
-      },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config: requestConfig,
-    }),
-  ),
+  axiosRequestAdapter: vi.fn(async (requestConfig): AxiosPromise => ({
+    data: {
+      submission: {},
+    },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config: requestConfig,
+  })),
   parseFormEnv: vi.fn(),
   getApiBaseUrl: vi.fn(),
 }))
@@ -57,6 +54,7 @@ describe('FormSG app', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -66,8 +64,8 @@ describe('FormSG app', () => {
 
     await $.http.get('localhost')
 
-    expect(mocks.parseFormEnv).toBeCalled()
-    expect(mocks.getApiBaseUrl).toBeCalledWith('stg')
+    expect(mocks.parseFormEnv).toHaveBeenCalled()
+    expect(mocks.getApiBaseUrl).toHaveBeenCalledWith('stg')
     expect(mocks.axiosRequestAdapter).toHaveBeenLastCalledWith(
       expect.objectContaining({
         baseURL: 'sample-mock-url',

@@ -1,6 +1,6 @@
-import { Dispatch, SetStateAction } from 'react'
 import { FormControl, FormLabel, Input } from '@chakra-ui/react'
 import { Button } from '@opengovsg/design-system-react'
+import { Dispatch, SetStateAction } from 'react'
 
 interface Props {
   isLoading: boolean
@@ -25,7 +25,7 @@ const OtpInput = ({ isLoading, email, otp, setOtp }: Props): JSX.Element => {
           placeholder="ABC123"
           value={otp}
           onChange={(e) => {
-            setOtp(e.target.value?.toUpperCase())
+            setOtp(e.target.value?.toUpperCase().trim())
           }}
         />
       </FormControl>

@@ -1,5 +1,4 @@
 import '@/types/luxon-extensions'
-
 import { DateTime, Settings as LuxonSettings } from 'luxon'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +15,7 @@ LuxonSettings.defaultLocale = 'en-SG'
 describe('common date-time formatter functions', () => {
   describe('date-time formats', () => {
     it('throws an error if it cannot parse a date time string', () => {
-      expect(() => parseDateTime('formsgSubmissionTime', 'derp')).toThrowError()
+      expect(() => parseDateTime('formsgSubmissionTime', 'derp')).toThrow()
     })
 
     it('throws an error if trying to stringify an invalid date time', () => {
@@ -25,7 +24,7 @@ describe('common date-time formatter functions', () => {
           'formsgSubmissionTime',
           DateTime.now().setZone('America/Blorp'),
         ),
-      ).toThrowError()
+      ).toThrow()
     })
 
     describe('formsg submission time', () => {
@@ -99,13 +98,13 @@ describe('common date-time formatter functions', () => {
     })
 
     it.each(['0', '-1', 'abc', ''])('throws for invalid serial %s', (input) => {
-      expect(() => parseDateTime('excelFormattedDate', input)).toThrowError()
+      expect(() => parseDateTime('excelFormattedDate', input)).toThrow()
     })
 
     it('stringify throws (input-only format)', () => {
       expect(() =>
         dateTimeToString('excelFormattedDate', DateTime.now()),
-      ).toThrowError()
+      ).toThrow()
     })
   })
 
@@ -126,7 +125,7 @@ describe('common date-time formatter functions', () => {
     })
 
     it('stringify throws (input-only format)', () => {
-      expect(() => dateTimeToString('now', DateTime.now())).toThrowError()
+      expect(() => dateTimeToString('now', DateTime.now())).toThrow()
     })
   })
 })

@@ -1,4 +1,3 @@
-import { experimental_createMCPClient as createMCPClient } from '@ai-sdk/mcp'
 import {
   getActiveTraceId,
   observe,
@@ -19,11 +18,17 @@ import type { Response } from 'express'
 import { Router } from 'express'
 
 import appConfig from '@/config/app'
+import { GITBOOK_MCP_SERVER } from '@/config/flags'
 import { BadUserInputError } from '@/errors/graphql-errors'
 import {
   buildSupportFormUrl,
   SUPPORT_FORM_URL_PLACEHOLDER,
 } from '@/helpers/ai/build-support-form-url'
+import {
+  closeQuietly,
+  connectGitbookMcp,
+  type GitbookMcpClient,
+} from '@/helpers/ai/connect-gitbook-mcp'
 import { getAiBuilderFlag } from '@/helpers/ai/get-ai-builder-flag'
 import {
   AI_CHAT_GENERIC_ERROR_MESSAGE,
@@ -63,6 +68,7 @@ import { chatRequestSchema } from './schema'
 
 // Keep in sync with schema.ts and frontend/src/pages/AiBuilder/constants.ts.
 const MAX_MESSAGES = 150
+const MAX_STEPS_PER_TURN = 20
 
 function emitTextAnnotations(text: string, writer: UIMessageStreamWriter) {
   const questions = parseClarificationBlock(text)
@@ -105,18 +111,16 @@ const handleChatStream = observe(
     const allLdFlags = await getAllLdFlags(context.currentUser.email)
     const aiBuilderFlag = getAiBuilderFlag(allLdFlags)
 
-    if (!aiBuilderFlag.enabled) {
-      res
-        .status(403)
-        .json({ error: 'You do not have permissions to use AI Builder!' })
-      return
-    }
-
     // NOTE: we pass restricted apps into the system prompt so the assistant knows which apps the user cannot use
     const restrictedApps = getRestrictedAppKeys(allLdFlags)
 
-    const { chatPromptName, chatSummaryPromptName, version } =
-      aiBuilderFlag.config
+    const {
+      chatPromptName,
+      chatSummaryPromptName,
+      version,
+      disabledMcpServers,
+    } = aiBuilderFlag.config
+    const disabledMcpServerSet = new Set(disabledMcpServers)
 
     try {
       const validationResult = chatRequestSchema.safeParse(req.body)
@@ -143,6 +147,7 @@ const handleChatStream = observe(
       // Convert UIMessages to ModelMessages
       const messages = convertToModelMessages(
         rawMessages as Parameters<typeof convertToModelMessages>[0],
+        { ignoreIncompleteToolCalls: true },
       )
 
       // Manually capture serializable input for Langfuse
@@ -176,6 +181,7 @@ const handleChatStream = observe(
         ddRumSessionId: rumSessionId,
         userId: context.currentUser.email,
         model: MODEL_TYPE,
+        disabledMcpServers,
       })
 
       // Re-derived fresh every turn from the raw message text and verified
@@ -197,34 +203,30 @@ const handleChatStream = observe(
       }
       const allMessages = [systemMessage, ...messages]
 
-      let mcpClient: Awaited<ReturnType<typeof createMCPClient>> | null = null
+      let mcpClient: GitbookMcpClient | null = null
       let gitbookTools = {} as Parameters<typeof streamText>[0]['tools']
 
-      try {
-        mcpClient = await createMCPClient({
-          transport: {
-            type: 'http',
-            url: 'https://guide.plumber.gov.sg/~gitbook/mcp',
-          },
-        })
-        gitbookTools = wrapMcpToolsWithUsageLogs(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (await mcpClient.tools()) as Parameters<
-            typeof streamText
-          >[0]['tools'],
-          {
-            source: 'gitbook',
+      if (!disabledMcpServerSet.has(GITBOOK_MCP_SERVER)) {
+        try {
+          const gitbook = await connectGitbookMcp()
+          mcpClient = gitbook.client
+          gitbookTools = wrapMcpToolsWithUsageLogs(
+            // oxlint-disable-next-line typescript/no-explicit-any
+            gitbook.tools as Parameters<typeof streamText>[0]['tools'],
+            {
+              source: 'gitbook',
+              traceId,
+              userId: context.currentUser.email,
+            },
+          )
+        } catch (error) {
+          await mcpClient?.close()
+          mcpClient = null
+          logger.error('Failed to connect to GitBook MCP server', {
             traceId,
-            userId: context.currentUser.email,
-          },
-        )
-      } catch (error) {
-        await mcpClient?.close()
-        mcpClient = null
-        logger.error('Failed to connect to GitBook MCP server', {
-          traceId,
-          error: error instanceof Error ? error.message : String(error),
-        })
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
       }
 
       const workflowError = 'Unable to generate the workflow.'
@@ -255,7 +257,7 @@ const handleChatStream = observe(
             model: chatModel,
             messages: allMessages,
             tools: { ...gitbookTools, ...mcpTools },
-            stopWhen: stepCountIs(10),
+            stopWhen: stepCountIs(MAX_STEPS_PER_TURN),
             experimental_repairToolCall: repairMalformedToolName,
             experimental_transform: [
               repairMalformedStreamedToolNames,
@@ -377,6 +379,14 @@ const handleChatStream = observe(
                           connectionLabel: connection
                             ? connectionLabel(connection)
                             : null,
+                          // Lets the preview draw an If block's extent
+                          // the same way the editor does.
+                          endStepId: step.config?.endStepId ?? null,
+                          // MRF stage steps are named after the form's stages.
+                          stepName: step.config?.stepName ?? null,
+                          // Lets the preview hide a reject path the same way
+                          // the editor does.
+                          approval: step.config?.approval ?? null,
                         }
                       }),
                     },
@@ -396,16 +406,9 @@ const handleChatStream = observe(
                   data: { isChatReady: false, error: workflowError },
                 })
               } finally {
-                try {
-                  await mcpClient?.close()
-                } catch (closeError) {
-                  logger.warn('Failed to close GitBook MCP client', {
-                    traceId,
-                    error:
-                      closeError instanceof Error
-                        ? closeError.message
-                        : String(closeError),
-                  })
+                // IMPORTANT: awaiting close() holds the finished reply open while GitBook is unresponsive.
+                if (mcpClient) {
+                  closeQuietly(mcpClient)
                 }
 
                 // Manually end the span since we're streaming
@@ -413,7 +416,9 @@ const handleChatStream = observe(
               }
             },
             onError: ({ error }) => {
-              void mcpClient?.close()
+              if (mcpClient) {
+                closeQuietly(mcpClient)
+              }
               mcpClient = null
               const errorMessage =
                 error instanceof Error ? error.message : String(error)
@@ -435,9 +440,14 @@ const handleChatStream = observe(
           writer.merge(
             result.toUIMessageStream({
               onError: getAiChatErrorMessage,
-              messageMetadata: () => ({
+              // finishReason 'tool-calls' means stopWhen cut the model off
+              // mid-task. The UI uses it to offer Continue.
+              messageMetadata: ({ part }) => ({
                 traceId,
                 model: MODEL_TYPE,
+                ...(part.type === 'finish' && {
+                  finishReason: part.finishReason,
+                }),
               }),
             }),
           )
@@ -481,7 +491,7 @@ const handleChatStream = observe(
   },
 )
 
-const router = Router()
+const router: Router = Router()
 
 router.post('/', handleChatStream)
 

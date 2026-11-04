@@ -1,25 +1,24 @@
-import type { IAuth, IGlobalVariable } from '@plumber/types'
-
 import { isFieldResponsesV4 } from '@opengovsg/formsg-sdk/adapters'
 import {
   DecryptedAttachments,
   DecryptedContent,
 } from '@opengovsg/formsg-sdk/dist/types'
+import type { IAuth, IGlobalVariable } from '@plumber/types'
 
 import { sha256Hash } from '@/helpers/crypto'
 import logger from '@/helpers/logger'
+import { retryOnTransientDbError } from '@/helpers/retry-on-transient-db-error'
 import EmailSuppressionEntry from '@/models/email-suppression-entry'
 
 import { getSdk, parseFormEnv } from '../common/form-env'
 import convertTableAnswerArrayToTableObject from '../common/process-table-field'
 import type { FormsgPayloadWorkflowContent } from '../common/types'
 import { NricFilter } from '../triggers/new-submission/index'
-
+import { decryptFormAttachmentsV3OrV4 } from './decrypt-form-attachments-v3-or-v4'
 import { computeSubmissionTime } from './helpers/compute-submission-time'
 import { processResponsesV3 } from './helpers/process-v3-responses'
 import { processResponsesV4 } from './helpers/process-v4-responses'
 import storeAttachmentInS3 from './helpers/store-attachment-in-s3'
-import { decryptFormAttachmentsV3OrV4 } from './decrypt-form-attachments-v3-or-v4'
 import { areAttachmentUrlsTrusted } from './trusted-attachment-urls'
 
 const NRIC_VERIFIED_FIELDS = new Set(['sgidUinFin', 'uinFin'])
@@ -224,6 +223,13 @@ export async function decryptFormResponse(
               : answer,
           )
         }
+      } else if (
+        rest.fieldType === 'table' &&
+        Array.isArray(rest.answerArray)
+      ) {
+        // An empty table has no rows. It still needs a table object, or the
+        // variable label is blank.
+        rest.answer = convertTableAnswerArrayToTableObject(rest.question, [])
       }
 
       // delete metadata from fields
@@ -237,19 +243,27 @@ export async function decryptFormResponse(
         rest.answer = filteredAnswer
       }
 
-      if (rest.fieldType === 'attachment' && shouldStoreAttachments) {
-        let s3FolderId = data.submissionId
-        if (data.workflowContent) {
-          // we add a suffix if it's an mrf step to prevent
-          // overwriting attachments from previous steps
-          s3FolderId += `-${workflowContent.workflowStep}`
+      let attachmentFilename: string | undefined
+      if (rest.fieldType === 'attachment') {
+        // IMPORTANT: Capture before storeAttachmentInS3 replaces answer with an
+        // opaque S3 ID.
+        attachmentFilename = rest.answer ?? ''
+
+        // A blank optional attachment has no file. A filename still needs its map.
+        if (shouldStoreAttachments && (attachments || rest.answer)) {
+          let s3FolderId = data.submissionId
+          if (data.workflowContent) {
+            // we add a suffix if it's an mrf step to prevent
+            // overwriting attachments from previous steps
+            s3FolderId += `-${workflowContent.workflowStep}`
+          }
+          rest.answer = await storeAttachmentInS3(
+            $,
+            s3FolderId,
+            formField,
+            attachments,
+          )
         }
-        rest.answer = await storeAttachmentInS3(
-          $,
-          s3FolderId,
-          formField,
-          attachments,
-        )
       }
 
       if (rest.fieldType === 'address') {
@@ -270,13 +284,17 @@ export async function decryptFormResponse(
       parsedData[_id.replaceAll('.', '_')] = {
         order: index + 1,
         ...rest,
+        ...(attachmentFilename !== undefined && {
+          filename: attachmentFilename,
+        }),
       }
     }
 
     if (verifiedEmails.length > 0) {
       try {
-        const whitelisted = await EmailSuppressionEntry.whitelistEmails(
-          verifiedEmails,
+        const whitelisted = await retryOnTransientDbError(
+          () => EmailSuppressionEntry.whitelistEmails(verifiedEmails),
+          { context: { flowId: $.flow.id, stepId: $.step.id } },
         )
         if (whitelisted.length > 0) {
           logger.info(

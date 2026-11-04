@@ -1,16 +1,8 @@
-import axios from 'axios'
+import type { FormEnv } from '@/apps/formsg/common/form-env'
+import { getMrfStepName } from '@/apps/formsg/common/get-mrf-step-name'
+import { mrfWorkflowDataSchema } from '@/apps/formsg/common/types'
 
-import { parseFormIdFromInput } from '@/apps/formsg/auth/verify-credentials'
-import {
-  FormEnv,
-  getApiBaseUrl,
-  parseFormEnvFromInput,
-} from '@/apps/formsg/common/form-env'
-import logger from '@/helpers/logger'
-
-const FORM_ID_REGEX = /^[a-f0-9]{24}$/i
-
-const REQUEST_TIMEOUT_MS = 10_000
+import { fetchPublicForm, type PublicFormField } from './fetch-public-form'
 
 const MAX_OPTIONS = 10
 
@@ -45,39 +37,28 @@ export interface McpFormField {
   myInfoAttr?: string
 }
 
+export interface McpMrfStage {
+  name: string
+  isApproval: boolean
+  /** Id of the field holding the approve/reject answer. Set when isApproval. */
+  approvalFieldId?: string
+  /** Ids of the form fields this stage fills in. */
+  fieldIds: string[]
+}
+
 export interface McpFormSchema {
   formId: string
   env: FormEnv
   title: string
   isStorageMode: boolean
   isMrf: boolean
+  /** Workflow stages in order. Only present for MRF forms. */
+  mrfStages?: McpMrfStage[]
   fields: McpFormField[]
   warnings: string[]
 }
 
 export type McpFormSchemaResult = McpFormSchema | { error: string }
-
-// Raw shape of the public GET /v3/forms/{id} response — only what we read.
-interface PublicFormField {
-  _id: string
-  title: string
-  fieldType: string
-  required?: boolean
-  fieldOptions?: string[]
-  columns?: Array<{ _id: string; title: string }>
-  myInfo?: { attr?: string }
-}
-
-interface PublicFormResponse {
-  form?: {
-    _id: string
-    title: string
-    responseMode: string
-    workflow?: unknown[]
-    publicKey?: string
-    form_fields?: PublicFormField[]
-  }
-}
 
 function toMcpFormField(field: PublicFormField): McpFormField {
   const answerType = ANSWER_ARRAY_FIELD_TYPES.has(field.fieldType)
@@ -112,61 +93,18 @@ function toMcpFormField(field: PublicFormField): McpFormField {
 }
 
 /**
- * Fetches the PUBLIC schema of a FormSG form — no connection or secret key
- * involved. Errors are returned as data ({ error }), never thrown, so the
- * LLM can relay them.
- *
- * SSRF-safe: the raw input is only ever parsed into a validated 24-hex-char
- * form ID and a known environment; the fetched URL is constructed against
- * the corresponding *.form.gov.sg API base and the user string is never
- * fetched directly.
+ * Returns the PUBLIC schema of a FormSG form, shaped for the AI Builder. No
+ * connection or secret key is involved. Errors are returned as data
+ * ({ error }), never thrown, so the LLM can relay them.
  */
 export async function getFormSchemaService(
   formUrlOrId: string,
 ): Promise<McpFormSchemaResult> {
-  let formId: string
-  let env: FormEnv
-  try {
-    const trimmed = formUrlOrId.trim()
-    formId = parseFormIdFromInput(trimmed)
-    env = parseFormEnvFromInput(trimmed)
-  } catch (e) {
-    return { error: (e as Error).message }
+  const result = await fetchPublicForm(formUrlOrId)
+  if ('error' in result) {
+    return result
   }
-
-  if (!FORM_ID_REGEX.test(formId)) {
-    return { error: 'Invalid form id' }
-  }
-
-  let response: PublicFormResponse
-  try {
-    const { data } = await axios.get<PublicFormResponse>(
-      `${getApiBaseUrl(env)}/v3/forms/${formId}`,
-      { timeout: REQUEST_TIMEOUT_MS },
-    )
-    response = data
-  } catch (e) {
-    logger.warn('getFormSchemaService: error fetching public form schema', {
-      formId,
-      env,
-      error: e.message,
-    })
-    if (e.response?.status === 404) {
-      if (e.response.data?.isPageFound) {
-        return {
-          error:
-            'This form is not public. Ask the user to make the form public and try again.',
-        }
-      }
-      return { error: 'Form does not exist. Check the form URL.' }
-    }
-    return { error: 'Unable to fetch form. Try again later.' }
-  }
-
-  const form = response?.form
-  if (!form?.title) {
-    return { error: 'Unable to fetch form. Try again later.' }
-  }
+  const { formId, env, form } = result
 
   const isStorageMode = Boolean(form.publicKey)
   // A form can be left in 'multirespondent' responseMode without ever having
@@ -182,10 +120,24 @@ export async function getFormSchemaService(
       'This form is not a storage mode form, so it cannot be connected to Plumber.',
     )
   }
+  let mrfStages: McpMrfStage[] | undefined
   if (isMrf) {
-    warnings.push(
-      'This is a multi-respondent (MRF) form, which is not supported by Plumber.',
-    )
+    const workflow = mrfWorkflowDataSchema.safeParse(form.workflow)
+    if (workflow.success) {
+      mrfStages = workflow.data.map((stage, index) => ({
+        name: getMrfStepName(stage.step_name, index),
+        isApproval: Boolean(stage.approval_field),
+        ...(stage.approval_field && { approvalFieldId: stage.approval_field }),
+        fieldIds: stage.edit,
+      }))
+      warnings.push(
+        'This is a multi-respondent (MRF) form. mrfStages lists its workflow stages in order. Pass the form URL to create_pipe as form_url and Plumber creates one step per stage after the trigger.',
+      )
+    } else {
+      warnings.push(
+        "This is a multi-respondent (MRF) form, but its workflow stages could not be read. Don't assume which stages need approval.",
+      )
+    }
   }
 
   const fields = (form.form_fields ?? [])
@@ -198,6 +150,7 @@ export async function getFormSchemaService(
     title: form.title,
     isStorageMode,
     isMrf,
+    ...(mrfStages && { mrfStages }),
     fields,
     warnings,
   }

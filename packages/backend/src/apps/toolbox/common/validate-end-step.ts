@@ -1,10 +1,10 @@
 import type { IStep, IStepConfig } from '@plumber/types'
-
 import { raw, Transaction } from 'objection'
 
 import {
   deriveIfThenV1EndStep,
   findBlankPlaceholderMemberIds,
+  getIfThenEndStep,
   reassignIfThenEndStepsOnDelete,
   reassignIfThenEndStepsOnReorder,
   remapIfThenEndStepIdsOnDuplicate,
@@ -169,9 +169,7 @@ function checkEndStepWrite({
     if (other.id === ifThenStepId || !isIfThenV2(other)) {
       continue
     }
-    const otherEnd = flowSteps.find(
-      (step) => step.id === other.config?.[BLOCK_END_STEP_ID],
-    )
+    const otherEnd = getIfThenEndStep(flowSteps, other)
     // Skip pre-existing dangling markers — out of scope for this write.
     if (!otherEnd) {
       continue
@@ -290,7 +288,7 @@ export async function pinEndStep(
 }
 
 // Mirrors packages/frontend/src/config/flags.ts's IF_THEN_THEN_FEATURE_FLAG.
-const IF_THEN_THEN_LD_FLAG_KEY = 'feature_if_then_then'
+export const IF_THEN_THEN_LD_FLAG_KEY = 'feature_if_then_then'
 
 /**
  * Deletes a V1 block's leftover blank placeholder members and closes the

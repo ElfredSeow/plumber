@@ -1,8 +1,3 @@
-import { MouseEvent, useCallback, useRef } from 'react'
-import { BiTrash } from 'react-icons/bi'
-import { BsDot } from 'react-icons/bs'
-import { MdOutlineRemoveRedEye } from 'react-icons/md'
-import { Link } from 'react-router-dom'
 import { useMutation } from '@apollo/client'
 import {
   AlertDialog,
@@ -29,6 +24,11 @@ import {
   useIsMobile,
   useToast,
 } from '@opengovsg/design-system-react'
+import { MouseEvent, useCallback, useRef } from 'react'
+import { BiTrash } from 'react-icons/bi'
+import { BsDot } from 'react-icons/bs'
+import { MdOutlineRemoveRedEye } from 'react-icons/md'
+import { Link } from 'react-router-dom'
 
 import * as URLS from '@/config/urls'
 import type { TableMetadata } from '@/graphql/__generated__/graphql'
@@ -37,7 +37,6 @@ import { GET_TABLES } from '@/graphql/queries/tiles/get-tables'
 import { toPrettyDateString } from '@/helpers/dateTime'
 
 import { TileConnections } from '..'
-
 import {
   flexStyles,
   linkStyles,
@@ -100,7 +99,7 @@ const TileListItem = ({
       <Flex {...linkStyles}>
         <Box>
           <Flex alignItems="center">
-            <Text textStyle="h6">{table.name}</Text>
+            <Text textStyle="subhead-1">{table.name}</Text>
           </Flex>
           <Flex {...flexStyles.container}>
             <Text {...textStyles.lastOpened}>
@@ -120,7 +119,7 @@ const TileListItem = ({
             )}
           </Flex>
         </Box>
-        <Flex alignItems="center" gap={4}>
+        <Flex alignItems="center" gap={4} pr={table.role === 'owner' ? 0 : 8}>
           {table.role === 'viewer' && (
             <Tag {...tagStyles}>
               <TagLeftIcon as={MdOutlineRemoveRedEye} />
@@ -131,6 +130,7 @@ const TileListItem = ({
             <IconButton
               className={isMobile ? undefined : 'hover-remove-button'}
               variant="clear"
+              colorScheme="secondary"
               aria-label="Remove"
               icon={<BiTrash />}
               isDisabled={isConnectionsLoading}

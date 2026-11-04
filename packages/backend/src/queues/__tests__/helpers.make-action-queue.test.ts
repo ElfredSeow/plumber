@@ -7,13 +7,14 @@ const mocks = vi.hoisted(() => {
 
   return {
     // BullMQ queue mocks
-    queueConstructor: vi.fn(() => ({
-      on: queueOn,
-    })),
+    queueConstructor: vi.fn(function () {
+      return { on: queueOn }
+    }),
     queueOn,
 
     // Misc mocks
     processOn: vi.fn(),
+    processExit: vi.fn(),
   }
 })
 
@@ -27,6 +28,7 @@ vi.mock('process', async () => {
     default: {
       ...process,
       on: mocks.processOn,
+      exit: mocks.processExit,
     },
   }
 })
@@ -50,8 +52,17 @@ vi.mock('@/helpers/generate-error-email', () => ({
   sendErrorEmail: vi.fn(),
 }))
 
+vi.mock('@/helpers/logger', () => ({
+  default: {
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+  },
+}))
+
 describe('makeActionQueue', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -71,5 +82,20 @@ describe('makeActionQueue', () => {
       connection: 'mock redis client',
       prefix: `{test}`,
     })
+  })
+
+  it('exits when redis refuses a connection', () => {
+    makeActionQueue({ queueName: 'some-queue' })
+    const onError = mocks.queueOn.mock.calls.find(
+      ([event]) => event === 'error',
+    )[1] as (err: Error) => void
+
+    onError(
+      Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:6379'), {
+        code: 'ECONNREFUSED',
+      }),
+    )
+
+    expect(mocks.processExit).toHaveBeenCalled()
   })
 })

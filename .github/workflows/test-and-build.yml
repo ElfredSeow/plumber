@@ -10,132 +10,185 @@ permissions:
   contents: read
 
 jobs:
-  setup:
-    name: Setup
+  supply-chain:
+    name: Supply chain verification
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
-      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
-      - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          node-version: '22'
-      - name: Update to supported npm
-        # Latest version at PR time; we just need to support min-release-age
-        run: npm install -g npm@11.19.0
-      - name: Cache node_modules
-        id: cache-node-modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+          persist-credentials: false
+      - uses: ./.github/actions/setup
         with:
-          path: node_modules
-          key: ${{ runner.os }}-node_modules-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node_modules-
-      - name: Install dependencies
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      # "@" inside pnpm_config__auth also sets the default registry to that host.
+      # /keys is an unscoped URL, so it needs host auth. pnpm 12 only accepts
+      # project or global, and global writes that token to the runner rc.
+      - name: Authenticate taskforce.sh for registry key reads
         env:
           NPM_TASKFORCESH_TOKEN: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
-      - name: Check packages are hoisted to root
-        run: |
-          for dir in packages/backend packages/frontend; do
-            if [ -d "$dir/node_modules" ]; then
-              echo "❌ Found node_modules in $dir — packages are not hoisted to root"
-              exit 1
-            fi
-          done
-          echo "✅ All packages are hoisted to root"
+        run: pnpm config set --location=global "//npm.taskforce.sh/:_authToken" "$NPM_TASKFORCESH_TOKEN"
+      - name: Verify registry signatures
+        run: pnpm audit signatures
+      - name: Generate SBOM
+        run: pnpm sbom --sbom-format cyclonedx --prod --out sbom.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom
+          path: sbom.cdx.json
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    needs: setup
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
-      - run: npm run lint
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - run: pnpm run lint
       - run: echo "✅ Lint check passed."
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - run: pnpm run format
+      - run: echo "✅ Format check passed."
 
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
-    needs: setup
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
-      - run: npm run typecheck
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - run: pnpm run typecheck
       - run: echo "✅ Typecheck passed."
+
+  typecheck-strict:
+    name: Typecheck (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - run: pnpm run typecheck:strict
+      - run: echo "✅ Strict typecheck passed."
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: setup
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
-      - run: VITE_MODE=test npm run build
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - name: Build packages
+        env:
+          VITE_MODE: test
+        run: pnpm run build
       - run: echo "✅ Build check passed."
 
   test-backend-unit:
     name: Test (backend unit)
     runs-on: ubuntu-latest
-    needs: setup
     timeout-minutes: 24
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
       - name: Configure Datadog Test Visibility
         env:
           DD_SERVICE_NAME: ${{ secrets.DD_SERVICE_NAME }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
-        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2
+        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2.10.0
         with:
           languages: js
           service: ${{ secrets.DD_SERVICE_NAME }}
           api_key: ${{ secrets.DD_API_KEY }}
           # we need to pin this for now since 5.68.0 breaks the ci
           js-tracer-version: 5.67.0
-      - run: npx turbo run test:unit --filter=backend
+      - run: pnpm exec turbo run test:unit --filter=backend
         env:
           # Required to allow Datadog to trace Vitest tests
           NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}
       - run: echo "✅ Backend unit tests passed."
 
-  test-backend-integration:
-    name: Test (backend integration)
+  test-backend-archive-unit:
+    name: Test (backend-archive unit)
     runs-on: ubuntu-latest
-    needs: setup
-    timeout-minutes: 24
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
       - name: Configure Datadog Test Visibility
         env:
           DD_SERVICE_NAME: ${{ secrets.DD_SERVICE_NAME }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
-        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2
+        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2.10.0
         with:
           languages: js
           service: ${{ secrets.DD_SERVICE_NAME }}
           api_key: ${{ secrets.DD_API_KEY }}
           # we need to pin this for now since 5.68.0 breaks the ci
           js-tracer-version: 5.67.0
-      - run: npx turbo run test:integration --filter=backend
+      - run: pnpm exec turbo run test:unit --filter=backend-archive
+        env:
+          # Required to allow Datadog to trace Vitest tests
+          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}
+      - run: echo "✅ Backend-archive unit tests passed."
+
+  test-backend-integration:
+    name: Test (backend integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
+      - name: Configure Datadog Test Visibility
+        env:
+          DD_SERVICE_NAME: ${{ secrets.DD_SERVICE_NAME }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2.10.0
+        with:
+          languages: js
+          service: ${{ secrets.DD_SERVICE_NAME }}
+          api_key: ${{ secrets.DD_API_KEY }}
+          # we need to pin this for now since 5.68.0 breaks the ci
+          js-tracer-version: 5.67.0
+      - run: pnpm exec turbo run test:integration --filter=backend
         env:
           # Required to allow Datadog to trace Vitest tests
           NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}
@@ -144,25 +197,26 @@ jobs:
   test-frontend:
     name: Test (frontend)
     runs-on: ubuntu-latest
-    needs: setup
     timeout-minutes: 24
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Generate graphql artifacts
-        run: npm run postinstall
+        with:
+          npm-taskforcesh-token: ${{ secrets.NPM_TASKFORCESH_TOKEN }}
       - name: Configure Datadog Test Visibility
         env:
           DD_SERVICE_NAME: ${{ secrets.DD_SERVICE_NAME }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
-        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2
+        uses: datadog/test-visibility-github-action@4e7afb05b464fd349275e41e65a7f4de83e7f46b # v2.10.0
         with:
           languages: js
           service: ${{ secrets.DD_SERVICE_NAME }}
           api_key: ${{ secrets.DD_API_KEY }}
           # we need to pin this for now since 5.68.0 breaks the ci
           js-tracer-version: 5.67.0
-      - run: npx turbo run test --filter=frontend
+      - run: pnpm exec turbo run test --filter=frontend
         env:
           # Required to allow Datadog to trace Vitest tests
           NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}

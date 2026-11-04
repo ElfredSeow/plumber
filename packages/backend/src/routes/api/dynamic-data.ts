@@ -1,5 +1,4 @@
 import type { IJSONObject } from '@plumber/types'
-
 import { Router } from 'express'
 import { z } from 'zod/v4'
 
@@ -11,7 +10,7 @@ import {
 } from '@/services/mcp/get-dynamic-data'
 import type { AuthenticatedRequest } from '@/types/express/context'
 
-const router = Router()
+const router: Router = Router()
 
 const bodySchema = z.object({
   stepId: z.uuid(),

@@ -1,10 +1,9 @@
-import type { IExecutionStep } from '@plumber/types'
-
-import { useMemo } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@apollo/client'
 import { Box, Flex, Grid, Text } from '@chakra-ui/react'
 import { Infobox, Pagination, Spinner } from '@opengovsg/design-system-react'
+import type { IExecutionStep } from '@plumber/types'
+import { useMemo } from 'react'
+import { useParams, useSearchParams } from 'react-router-dom'
 
 import Container from '@/components/Container'
 import ExecutionGroup from '@/components/ExecutionGroup'
@@ -55,7 +54,7 @@ export default function Execution() {
   }
 
   return (
-    <Container sx={{ py: 3 }}>
+    <Container pt={0} pb={9}>
       <ExecutionHeader execution={execution} />
 
       <Grid mt={4} mb={{ base: '16px', sm: '40px' }} rowGap={6}>

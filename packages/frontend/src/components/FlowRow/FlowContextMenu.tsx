@@ -1,13 +1,3 @@
-import { IFlow } from '@plumber/types'
-
-import { MouseEvent, useCallback, useRef, useState } from 'react'
-import {
-  BiDotsHorizontalRounded,
-  BiDuplicate,
-  BiShow,
-  BiTrash,
-} from 'react-icons/bi'
-import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@apollo/client'
 import {
   Icon,
@@ -22,6 +12,15 @@ import {
   TouchableTooltip,
   useToast,
 } from '@opengovsg/design-system-react'
+import { IFlow } from '@plumber/types'
+import { MouseEvent, useCallback, useRef, useState } from 'react'
+import {
+  BiDotsHorizontalRounded,
+  BiDuplicate,
+  BiShow,
+  BiTrash,
+} from 'react-icons/bi'
+import { useNavigate } from 'react-router-dom'
 
 import MenuAlertDialog, { AlertDialogType } from '@/components/MenuAlertDialog'
 import * as URLS from '@/config/urls'
@@ -55,6 +54,7 @@ export default function FlowContextMenu(props: FlowContextMenuProps) {
   const toast = useToast()
   const [deleteFlow, { loading: isDeletingFlow }] = useMutation(DELETE_FLOW)
   const flowTransfer = flow?.pendingTransfer
+  const isOwner = flow.role === 'owner'
 
   const [duplicateFlow, { loading: isDuplicatingFlow }] = useMutation(
     DUPLICATE_FLOW,
@@ -161,23 +161,25 @@ export default function FlowContextMenu(props: FlowContextMenuProps) {
           >
             Duplicate
           </MenuItem>
-          <TouchableTooltip
-            label={
-              flowTransfer
-                ? 'You cannot delete a pipe with a pending transfer'
-                : ''
-            }
-            aria-label="Delete Flow Warning"
-          >
-            <MenuItem
-              isDisabled={!!flowTransfer}
-              onClick={onDeleteButtonClick}
-              icon={<Icon as={BiTrash} boxSize={5} />}
-              color="interaction.critical.default"
+          {isOwner && (
+            <TouchableTooltip
+              label={
+                flowTransfer
+                  ? 'You cannot delete a pipe with a pending transfer'
+                  : ''
+              }
+              aria-label="Delete Flow Warning"
             >
-              Delete
-            </MenuItem>
-          </TouchableTooltip>
+              <MenuItem
+                isDisabled={!!flowTransfer}
+                onClick={onDeleteButtonClick}
+                icon={<Icon as={BiTrash} boxSize={5} />}
+                color="interaction.critical.default"
+              >
+                Delete
+              </MenuItem>
+            </TouchableTooltip>
+          )}
         </MenuList>
       </Menu>
       <MenuAlertDialog

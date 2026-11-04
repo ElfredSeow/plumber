@@ -1,5 +1,6 @@
-import { config } from 'dotenv'
 import path from 'node:path'
+
+import { config } from 'dotenv'
 
 // Placeholders backstop missing keys. Local dev gets its real values from 1Password,
 // which dotenv never overrides.
@@ -54,7 +55,7 @@ function devString(name: string, devDefault: string): string {
 
 export const archivalConfig = {
   isDev,
-  // Postgres — mirrors the fields used by @/config/database
+  // Postgres: mirrors backend's config/app/db.ts
   postgresHost:
     process.env.RDS_PROXY_HOST ?? devString('POSTGRES_HOST', 'localhost'),
   postgresPort: requireInt('POSTGRES_PORT', 5432),

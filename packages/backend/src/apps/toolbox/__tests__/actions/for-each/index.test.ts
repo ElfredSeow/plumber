@@ -1,5 +1,4 @@
 import { IGlobalVariable } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -116,6 +115,7 @@ describe('For each action', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

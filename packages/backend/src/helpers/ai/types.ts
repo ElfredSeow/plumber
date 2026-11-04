@@ -3,7 +3,6 @@ import type {
   IFlowStepsAction,
   IFlowStepsTrigger,
 } from '@plumber/types'
-
 import { z } from 'zod'
 
 const triggerStepSchema = z.object({
@@ -11,6 +10,7 @@ const triggerStepSchema = z.object({
   appKey: z.string(),
   key: z.string(),
   description: z.string(),
+  config: z.object({ stepName: z.string() }).optional(),
 }) satisfies z.ZodType<IFlowStepsTrigger>
 
 const actionStepSchema = z.object({
@@ -28,6 +28,9 @@ const actionStepSchema = z.object({
       branchName: z.string(),
     })
     .optional(),
+  ifThenChildCount: z.number().int().min(1).optional(),
+  isApproval: z.boolean().optional(),
+  approvalBranch: z.literal('reject').optional(),
 }) satisfies z.ZodType<IFlowStepsAction>
 
 export const flowStepsSchema = z.object({

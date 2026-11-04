@@ -24,7 +24,242 @@ steps:
 -->
 `
 
+const MRF_PROPOSAL = `
+<!-- WORKFLOW_METADATA
+name: Leave Approval
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    stepName: Requestor
+    description: Leave request submitted
+  - step: 2
+    appKey: formsg
+    key: mrfSubmission
+    stepName: Approval
+    description: The manager approves or rejects
+  - step: 3
+    appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email the applicant
+    description: Tell the applicant the outcome
+-->
+`
+
+const approvalProposal = (rejectedStageLine: string) => `
+<!-- WORKFLOW_METADATA
+name: Leave Approval
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    stepName: Requestor
+    description: Leave request submitted
+  - step: 2
+    appKey: formsg
+    key: mrfSubmission
+    stepName: Approval
+    description: The manager approves or rejects
+${rejectedStageLine}
+  - step: 3
+    appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email approved
+    description: Tell the applicant it is approved
+  - step: 4
+    appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email rejected
+    description: Tell the applicant it is rejected
+    approvalBranch: reject
+-->
+`
+
 describe('parseWorkflowMetadata', () => {
+  describe('MRF approval stages', () => {
+    it('passes the approval flag and the rejected path to the preview', () => {
+      const result = parseWorkflowMetadata(
+        approvalProposal('    isApproval: true'),
+      )
+
+      expect(
+        result.actions.map((a) => [
+          a.config.stepName,
+          a.isApproval,
+          a.approvalBranch,
+        ]),
+      ).toEqual([
+        ['Approval', true, undefined],
+        ['Email approved', undefined, undefined],
+        ['Email rejected', undefined, 'reject'],
+      ])
+    })
+
+    it('ties each rejected action to the approval stage above it', () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Two Approvals
+steps:
+  - appKey: formsg
+    key: newSubmission
+    stepName: Applicant
+  - appKey: formsg
+    key: mrfSubmission
+    stepName: Manager
+    isApproval: true
+  - appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email manager rejected
+    approvalBranch: reject
+  - appKey: formsg
+    key: mrfSubmission
+    stepName: Director
+    isApproval: true
+  - appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email approved
+  - appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email director rejected
+    approvalBranch: reject
+-->
+`
+      const result = parseWorkflowMetadata(text)
+
+      expect(
+        result.actions.map((a) => [a.config.stepName, a.approvalBranch]),
+      ).toEqual([
+        ['Manager', undefined],
+        ['Email manager rejected', 'reject'],
+        ['Director', undefined],
+        ['Email approved', undefined],
+        ['Email director rejected', 'reject'],
+      ])
+    })
+
+    it("puts an If block's steps on the If block's path", () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Rejected If
+steps:
+  - appKey: formsg
+    key: newSubmission
+    stepName: Applicant
+  - appKey: formsg
+    key: mrfSubmission
+    stepName: Approver
+    isApproval: true
+  - appKey: postman
+    key: sendTransactionalEmail
+    stepName: Email approved
+  - appKey: toolbox
+    key: ifThen
+    stepName: Check urgency
+    branchName: Urgent
+    approvalBranch: reject
+    steps:
+      - appKey: postman
+        key: sendTransactionalEmail
+        stepName: Email urgent rejection
+      - appKey: postman-sms
+        key: sendSms
+        stepName: SMS urgent rejection
+-->
+`
+      const result = parseWorkflowMetadata(text)
+
+      expect(result.actions[2]).toMatchObject({
+        key: 'ifThen',
+        approvalBranch: 'reject',
+        ifThenChildCount: 2,
+      })
+      expect(result.actions.slice(3).map((a) => a.approvalBranch)).toEqual([
+        'reject',
+        'reject',
+      ])
+    })
+
+    it('checks the for-each and delay rules on each path separately', () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Loop per outcome
+steps:
+  - appKey: formsg
+    key: newSubmission
+  - appKey: formsg
+    key: mrfSubmission
+    isApproval: true
+  - appKey: toolbox
+    key: forEach
+  - appKey: delay
+    key: delayFor
+    approvalBranch: reject
+  - appKey: toolbox
+    key: forEach
+    approvalBranch: reject
+-->
+`
+      expect(parseWorkflowMetadata(text).actions).toHaveLength(4)
+    })
+
+    it('puts the approved steps above a stage on its rejected path', () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Loop before approval
+steps:
+  - appKey: formsg
+    key: newSubmission
+  - appKey: toolbox
+    key: forEach
+  - appKey: formsg
+    key: mrfSubmission
+    isApproval: true
+  - appKey: delay
+    key: delayFor
+    approvalBranch: reject
+-->
+`
+      expect(() => parseWorkflowMetadata(text)).toThrow(
+        'Delay action cannot be added after a for-each step',
+      )
+    })
+
+    it('rejects a rejected-path action with no approval stage above it', () => {
+      expect(() => parseWorkflowMetadata(approvalProposal(''))).toThrow(
+        'A rejected-path action must come after an approval stage of the form',
+      )
+    })
+
+    it('keeps the form stage name on the trigger of an MRF proposal', () => {
+      const result = parseWorkflowMetadata(MRF_PROPOSAL)
+
+      expect(result.trigger.config?.stepName).toBe('Requestor')
+    })
+
+    it('leaves the trigger name off a proposal with no MRF stage', () => {
+      const result = parseWorkflowMetadata(VALID_WORKFLOW)
+
+      expect(result.trigger.config).toBeUndefined()
+    })
+  })
+
+  describe('MRF stage steps', () => {
+    it('lets a proposal show a stage step so the preview can draw it', () => {
+      const result = parseWorkflowMetadata(MRF_PROPOSAL)
+
+      expect(result.actions.map((a) => [a.appKey, a.key])).toEqual([
+        ['formsg', 'mrfSubmission'],
+        ['postman', 'sendTransactionalEmail'],
+      ])
+    })
+
+    it('keeps the stage name as the step title', () => {
+      const result = parseWorkflowMetadata(MRF_PROPOSAL)
+
+      expect(result.actions[0].config?.stepName).toBe('Approval')
+    })
+  })
+
   describe('valid metadata', () => {
     it('extracts trigger and actions', () => {
       const result = parseWorkflowMetadata(VALID_WORKFLOW)
@@ -117,6 +352,78 @@ steps:
         depth: 0,
         branchName: 'Priority is High',
       })
+    })
+
+    it('flattens steps nested under an if-then into an explicit If block', () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Urgent Routing
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    stepName: If
+    branchName: Is urgent
+    description: Check urgency
+    steps:
+      - step: 3
+        appKey: slack
+        key: sendMessageToChannel
+        stepName: Alert ops
+        description: Post to the ops channel
+      - step: 4
+        appKey: postman-sms
+        key: sendSms
+        stepName: SMS duty officer
+        description: Text the duty officer
+  - step: 5
+    appKey: postman
+    key: sendTransactionalEmail
+    stepName: Send email
+    description: Always email the requester
+-->
+`
+      const result = parseWorkflowMetadata(text)
+      expect(result.actions.map((action) => action.key)).toStrictEqual([
+        'ifThen',
+        'sendMessageToChannel',
+        'sendSms',
+        'sendTransactionalEmail',
+      ])
+      expect(result.actions[0].ifThenChildCount).toBe(2)
+      expect(result.actions[0].parameters).toStrictEqual({
+        depth: 0,
+        branchName: 'Is urgent',
+      })
+      expect(result.actions[1].ifThenChildCount).toBeUndefined()
+      expect(result.actions[3].ifThenChildCount).toBeUndefined()
+    })
+
+    it('leaves a flat if-then without nested steps on the derived extent', () => {
+      const text = `
+<!-- WORKFLOW_METADATA
+name: Flat
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    description: Check
+  - step: 3
+    appKey: postman
+    key: sendTransactionalEmail
+    description: Action
+-->
+`
+      const result = parseWorkflowMetadata(text)
+      expect(result.actions[0].ifThenChildCount).toBeUndefined()
     })
 
     it('adds templateConfig to each action', () => {
@@ -238,9 +545,7 @@ steps:
     key: ifThen
     description: If-then at end
 -->`),
-      ).toThrow(
-        'If-then actions must have another action immediately after them',
-      )
+      ).toThrow('Cannot have empty If block')
     })
 
     it('throws when if-then actions are consecutive', () => {
@@ -265,9 +570,7 @@ steps:
     key: sendTransactionalEmail
     description: Action
 -->`),
-      ).toThrow(
-        'If-then actions cannot be consecutive - must alternate with non-if-then actions',
-      )
+      ).toThrow('Cannot have empty If block')
     })
 
     it('throws when for-each is placed after an if-then', () => {
@@ -292,7 +595,104 @@ steps:
     key: forEach
     description: For-each after if-then
 -->`),
-      ).toThrow('For-each action cannot be placed after an if-then action')
+      ).toThrow('For-each action cannot be placed inside an If block')
+    })
+
+    it('throws when an if-then block is explicitly empty', () => {
+      expect(() =>
+        parseWorkflowMetadata(`<!-- WORKFLOW_METADATA
+name: Empty block
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    description: If
+    steps: []
+  - step: 3
+    appKey: postman
+    key: sendTransactionalEmail
+    description: Action
+-->`),
+      ).toThrow('An If block must contain at least one step.')
+    })
+
+    it('throws when an if-then block has a blank steps value', () => {
+      expect(() =>
+        parseWorkflowMetadata(`<!-- WORKFLOW_METADATA
+name: Blank block
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    description: If
+    steps:
+  - step: 3
+    appKey: postman
+    key: sendTransactionalEmail
+    description: Action
+-->`),
+      ).toThrow('An If block must contain at least one step.')
+    })
+
+    it('throws when an if-then block has a mapping instead of a steps list', () => {
+      expect(() =>
+        parseWorkflowMetadata(`<!-- WORKFLOW_METADATA
+name: Mapping block
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    description: If
+    steps:
+      step: 3
+      appKey: postman
+      key: sendTransactionalEmail
+      description: Conditional action
+  - step: 4
+    appKey: postman
+    key: sendTransactionalEmail
+    description: Action after block
+-->`),
+      ).toThrow('An If block must list its steps.')
+    })
+
+    it('throws when an if-then is nested inside another if-then block', () => {
+      expect(() =>
+        parseWorkflowMetadata(`<!-- WORKFLOW_METADATA
+name: My Workflow
+steps:
+  - step: 1
+    appKey: formsg
+    key: newSubmission
+    description: Trigger
+  - step: 2
+    appKey: toolbox
+    key: ifThen
+    description: Outer
+    steps:
+      - step: 3
+        appKey: toolbox
+        key: ifThen
+        description: Inner
+        steps:
+          - step: 4
+            appKey: postman
+            key: sendTransactionalEmail
+            description: Action
+-->`),
+      ).toThrow('If blocks cannot be nested inside another If block')
     })
 
     it('throws when a delay action is placed after a for-each', () => {

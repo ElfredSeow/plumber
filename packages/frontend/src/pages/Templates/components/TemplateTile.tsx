@@ -1,8 +1,7 @@
-import type { ITemplate } from '@plumber/types'
-
-import { useNavigate } from 'react-router-dom'
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { Badge, Tile } from '@opengovsg/design-system-react'
+import type { ITemplate } from '@plumber/types'
+import { useNavigate } from 'react-router-dom'
 
 import * as URLS from '@/config/urls'
 import { TemplateIcon } from '@/helpers/flow-templates'
@@ -37,7 +36,9 @@ export default function TemplateTile({ template }: TemplateTileProps) {
     >
       <Flex flexDir="column" gap={2} mt={2}>
         <Text textStyle="subhead-1">{name}</Text>
-        <Text textStyle="body-2">{description}</Text>
+        <Text textStyle="body-2" color="base.content.medium">
+          {description}
+        </Text>
       </Flex>
     </Tile>
   )

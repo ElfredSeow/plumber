@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import app from '../..'
@@ -40,10 +39,11 @@ describe('get payment', () => {
       } as unknown as IGlobalVariable['http'],
       setActionItem: vi.fn(),
       app,
-    }
+    } as unknown as IGlobalVariable
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -67,7 +67,7 @@ describe('get payment', () => {
 
   it('parses the response correctly', async () => {
     await getPaymentAction.run($)
-    expect($.setActionItem).toBeCalledWith({
+    expect($.setActionItem).toHaveBeenCalledWith({
       raw: {
         id: MOCK_PAYMENT.id,
         paymentUrl: MOCK_PAYMENT.payment_url,

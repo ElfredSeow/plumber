@@ -3,11 +3,11 @@ import { defineConfig } from 'vite'
 import loadVersion from 'vite-plugin-package-version'
 import viteTsconfigPaths from 'vite-tsconfig-paths'
 
-import { failOnLeakedNodeBuiltins } from './vite-config-utils'
+import { failOnLeakedNodeBuiltins } from './vite-config-utils.ts'
 
 // Ports are assigned per Superset worktree by .superset/base_port.sh and exported as
 // DEV_BACKEND_PORT / DEV_FRONTEND_PORT. Fall back to the classic 3000/3001 for a
-// plain, non-Superset `npm run dev`.
+// plain, non-Superset `pnpm run dev`.
 const backendPort = process.env.DEV_BACKEND_PORT || '3000'
 const frontendPort = Number(process.env.DEV_FRONTEND_PORT) || 3001
 const backendTarget = `http://localhost:${backendPort}`
@@ -15,13 +15,15 @@ const backendTarget = `http://localhost:${backendPort}`
 // https://vitejs.dev/config/
 export default defineConfig({
   // loadVersion injects package.json version into import.meta.env.PACKAGE_VERSION
-  plugins: [react(), viteTsconfigPaths(), loadVersion()],
+  plugins: [
+    react(),
+    viteTsconfigPaths(),
+    loadVersion(),
+    failOnLeakedNodeBuiltins(),
+  ],
   build: {
     // disable inline images since we don't allow them in csp
     assetsInlineLimit: 0,
-    rollupOptions: {
-      onwarn: failOnLeakedNodeBuiltins,
-    },
   },
   server: {
     open: `http://localhost:${frontendPort}`,

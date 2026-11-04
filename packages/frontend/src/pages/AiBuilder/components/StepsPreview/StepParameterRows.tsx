@@ -1,5 +1,6 @@
+import { useQuery } from '@apollo/client'
+import { Box, Flex, Table, Tbody, Td, Text, Tr } from '@chakra-ui/react'
 import type { IFieldDropdownOption, IJSONObject } from '@plumber/types'
-
 import {
   Fragment,
   type ReactNode,
@@ -8,8 +9,6 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { useQuery } from '@apollo/client'
-import { Box, Flex, Table, Tbody, Td, Text, Tr } from '@chakra-ui/react'
 
 import {
   buildVariableInfoMapFromPaths,
@@ -33,6 +32,7 @@ import {
   resolveDynamicSourceVariables,
   withDynamicOptions,
 } from './helpers/dynamicFieldOptions'
+import { isInternalParameter } from './helpers/isInternalParameter'
 import {
   getStepFields,
   isRichTextField,
@@ -287,7 +287,10 @@ export default function StepParameterRows({
 
   const fieldIndexMap = new Map(stepFields.map((f, i) => [f.key, i]))
   const rows = Object.entries(parameters)
-    .filter(([, value]) => value !== '' && value != null)
+    .filter(
+      ([key, value]) =>
+        value !== '' && value != null && !isInternalParameter(appKey, key),
+    )
     .map(([key, value]) => {
       const field = stepFields.find((f) => f.key === key)
       const hasAiLabel = parameterLabels[key] != null
@@ -307,8 +310,8 @@ export default function StepParameterRows({
         displayLines: hasAiLabel
           ? [parameterLabels[key]]
           : isPreview
-          ? []
-          : resolveDisplayValue(stepFields, key, value),
+            ? []
+            : resolveDisplayValue(stepFields, key, value),
         columnValueRows:
           hasAiLabel || isPreview ? null : resolveColumnValueRows(field, value),
         hiddenIf: field?.hiddenIf,

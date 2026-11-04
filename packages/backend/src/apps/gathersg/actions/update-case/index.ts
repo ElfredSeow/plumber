@@ -4,7 +4,6 @@ import type {
   IJSONObject,
   IRawAction,
 } from '@plumber/types'
-
 import { ZodError } from 'zod'
 import { fromZodError } from 'zod-validation-error'
 
@@ -14,13 +13,14 @@ import { ensureZodEnumValue } from '@/helpers/zod-utils'
 import Step from '@/models/step'
 
 import { uploadCaseAttachments } from '../../common/attachment'
+import { resolveCaseIdentifier } from '../../common/case-identifier'
 import {
   fieldTypeEnum,
   GATHER_ATTACHMENT_FIELD_TYPE,
+  UNEXPECTED_RESPONSE_SOLUTION,
 } from '../../common/constants'
 import throwGatherSGStepError from '../../common/throw-errors'
 import { GatherSGCase } from '../../common/types'
-
 import { requestSchema, responseSchema } from './schema'
 
 /**
@@ -64,14 +64,14 @@ async function getExistingAttachmentUuids(
 const action: IRawAction = {
   name: 'Update case',
   key: 'updateCase',
-  description: 'Update a case based on the case uuid',
+  description: 'Update a case using a case uuid or case ref',
   preserveArrayVariables: true,
   arguments: [
     {
-      label: 'Case UUID',
+      label: 'Case UUID or case ref',
       key: 'caseUuid',
       type: 'string' as const,
-      description: 'Select the case uuid you want to update.',
+      description: 'Select a variable with a case UUID or case ref.',
       required: true,
       variables: true,
       // we intentionally disable typing for case uuid as it is used in
@@ -272,16 +272,17 @@ const action: IRawAction = {
   },
   doesFileProcessing: (step: Step) =>
     ((step.parameters.attachmentFields as IJSONArray | undefined) ?? []).some(
-      (row) =>
+      (row: unknown) =>
         Array.isArray((row as IJSONObject).attachments) &&
         ((row as IJSONObject).attachments as IJSONArray).length > 0,
     ),
 
   async run($) {
     try {
-      const { attachmentFields, ...patchBody } = requestSchema.parse(
-        $.step.parameters,
-      )
+      const parsed = requestSchema.parse($.step.parameters)
+      const caseUuid = await resolveCaseIdentifier($, parsed.caseUuid)
+      const { attachmentFields, ...patchBody } = parsed
+      patchBody.caseUuid = caseUuid
 
       if (attachmentFields.length > 0) {
         const uploaded: {
@@ -300,7 +301,7 @@ const action: IRawAction = {
             replaceExisting,
             uuids: await uploadCaseAttachments({
               $,
-              caseUuid: patchBody.caseUuid,
+              caseUuid,
               field,
               fieldType: GATHER_ATTACHMENT_FIELD_TYPE,
               s3Ids: attachments,
@@ -312,11 +313,7 @@ const action: IRawAction = {
           .filter(({ replaceExisting }) => !replaceExisting)
           .map(({ field }) => field)
         const existingUuids = fieldsToAppend.length
-          ? await getExistingAttachmentUuids(
-              $,
-              patchBody.caseUuid,
-              fieldsToAppend,
-            )
+          ? await getExistingAttachmentUuids($, caseUuid, fieldsToAppend)
           : new Map<string, string[]>()
 
         for (const { field, replaceExisting, uuids } of uploaded) {
@@ -333,23 +330,31 @@ const action: IRawAction = {
 
       const rawResponse = await $.http.patch('/cases/:caseUuid', patchBody, {
         urlPathParams: {
-          caseUuid: $.step.parameters.caseUuid,
+          caseUuid,
         },
       })
-      const response = responseSchema.parse(rawResponse.data)
+      const response = responseSchema.safeParse(rawResponse.data)
+      if (!response.success) {
+        throw new StepError({
+          name: `${fromZodError(response.error).details[0].message}`,
+          solution: UNEXPECTED_RESPONSE_SOLUTION,
+          kind: 'third-party',
+        })
+      }
 
       $.setActionItem({
         raw: {
-          ...response,
+          ...response.data,
         },
       })
     } catch (error) {
       if (error instanceof ZodError) {
         const firstError = fromZodError(error).details[0]
-        throw new StepError(
-          `${firstError.message}`,
-          GenericSolution.ReconfigureInvalidField,
-        )
+        throw new StepError({
+          name: `${firstError.message}`,
+          solution: GenericSolution.ReconfigureInvalidField,
+          kind: 'config',
+        })
       }
 
       if (error instanceof StepError) {
@@ -360,10 +365,11 @@ const action: IRawAction = {
         throwGatherSGStepError(error)
       }
 
-      throw new StepError(
-        `An error occurred: '${error.message}'`,
-        'Please check that you have configured your step correctly',
-      )
+      throw new StepError({
+        name: `An error occurred: '${error.message}'`,
+        solution: 'Please check that you have configured your step correctly',
+        kind: 'internal',
+      })
     }
   },
 }

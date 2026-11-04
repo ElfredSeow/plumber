@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import getCaseAttachmentFields from '../../dynamic-data/get-case-attachment-fields'
@@ -43,6 +42,7 @@ describe('getCaseAttachmentFields', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

@@ -1,8 +1,3 @@
-import type { IFlow } from '@plumber/types'
-
-import { ReactElement } from 'react'
-import { BiChevronRight, BiGroup } from 'react-icons/bi'
-import { Link } from 'react-router-dom'
 import {
   Box,
   Card,
@@ -15,7 +10,11 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { Badge, IconButton } from '@opengovsg/design-system-react'
+import type { IFlow } from '@plumber/types'
 import { DateTime } from 'luxon'
+import { ReactElement } from 'react'
+import { BiChevronRight, BiGroup } from 'react-icons/bi'
+import { Link } from 'react-router-dom'
 
 import FlowAppIcons from '@/components/FlowAppIcons'
 import * as URLS from '@/config/urls'
@@ -103,7 +102,8 @@ export default function FlowRow(props: FlowRowProps): ReactElement {
           }
           flex={1}
           py={6}
-          px={{ base: 3, md: 8 }}
+          pl={{ base: 3, md: 8 }}
+          pr={0}
           display="flex"
           flexDir={{ base: 'column', md: 'row' }}
           alignItems="stretch"

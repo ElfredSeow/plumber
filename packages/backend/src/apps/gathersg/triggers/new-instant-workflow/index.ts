@@ -1,5 +1,4 @@
 import { IGlobalVariable, IRawTrigger } from '@plumber/types'
-
 import { type ZodIssue, type ZodSafeParseError } from 'zod'
 
 import StepError from '@/errors/step'
@@ -49,10 +48,11 @@ const trigger: IRawTrigger = {
           .filter(Boolean)
           .join(', ')
 
-        throw new StepError(
-          'Encryption key is not valid',
-          `Encryption key must ${error}`,
-        )
+        throw new StepError({
+          name: 'Encryption key is not valid',
+          solution: `Encryption key must ${error}`,
+          kind: 'config',
+        })
       }
     }
 

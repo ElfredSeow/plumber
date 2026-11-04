@@ -3,9 +3,14 @@
 // Configure Vitest (https://vitest.dev/config/)
 // This is for tests that require a database connection.
 
+import { globSync, readFileSync } from 'fs'
+import { cpus } from 'os'
+import { join, resolve } from 'path'
+
 import { config } from 'dotenv'
-import { resolve } from 'path'
 import { defineConfig } from 'vitest/config'
+
+import { MAX_WORKER_SLOTS } from './test/helpers/integration-constants'
 
 function getPath(relativePath: string): string {
   return resolve(__dirname, relativePath)
@@ -16,37 +21,101 @@ config({
   path: getPath('./.env-example'),
 })
 
-export default defineConfig({
-  test: {
-    name: 'backend-integration',
-    // load env variables
-    setupFiles: [
-      'dotenv/config',
-      getPath('./test/pg-reset-db-setup.ts'),
-      getPath('./test/ddb-reset-db-setup.ts'),
-    ],
-    globalSetup: [
-      getPath('./test/pg-global-setup.ts'),
-      getPath('./test/tiles-pg-global-setup.ts'),
-      getPath('./test/ddb-global-setup.ts'),
-      getPath('./test/redis-global-setup.ts'),
-    ],
-    pool: 'threads',
-    poolOptions: {
-      threads: {
-        singleThread: true,
+const ITEST_INCLUDE = 'src/**/*.itest.{js,ts}'
+const TEST_HELPERS = 'src/**/__tests__/**/*.ts'
+
+// With isolate: false, these calls leak module or global state into later
+// files, so files that use them get their own graph.
+// This is a text heuristic. If leaks still slip through, replace it with an
+// explicit list of files allowed to share a graph.
+const MODULE_STATE_CALL =
+  /\bvi\.(mock|doMock|unmock|resetModules|stubGlobal|stubEnv|useFakeTimers|setSystemTime)\s*\(/
+
+function changesModuleState(file: string): boolean {
+  return MODULE_STATE_CALL.test(readFileSync(join(__dirname, file), 'utf8'))
+}
+
+// IMPORTANT: Isolation is decided per test file. A helper making these calls
+// would leak through every test file that imports it.
+const helpersChangingModuleState = globSync(TEST_HELPERS, { cwd: __dirname })
+  .filter((file) => !/\.(test|itest)\.ts$/.test(file))
+  .filter(changesModuleState)
+if (helpersChangingModuleState.length > 0) {
+  throw new Error(
+    `Move these vi calls into the test files: ${helpersChangingModuleState.join(', ')}`,
+  )
+}
+
+const isolatedItests = globSync(ITEST_INCLUDE, { cwd: __dirname }).filter(
+  changesModuleState,
+)
+
+const sharedTest = {
+  root: __dirname,
+  globalSetup: [getPath('./test/global-setup.ts')],
+  setupFiles: [
+    'dotenv/config',
+    getPath('./test/pg-reset-db-setup.ts'),
+    getPath('./test/redis-reset-setup.ts'),
+    getPath('./test/dynamodb-reset-setup.ts'),
+  ],
+  // Wiping DynamoDB after large tile row tests (e.g. 10k rows) can exceed 10s.
+  hookTimeout: 120_000,
+  pool: 'threads' as const,
+  sequence: {
+    concurrent: false,
+  },
+  onConsoleLog: (log: string, _type: 'stdout' | 'stderr'): false | void => {
+    if (log.startsWith('vite:')) {
+      return false
+    }
+  },
+}
+
+// IMPORTANT: Each worker needs its own isolation slot. Configs that run these
+// projects must cap maxWorkers at this value.
+export const integrationMaxWorkers = Math.min(cpus().length, MAX_WORKER_SLOTS)
+
+const sharedResolve = {
+  alias: {
+    '@': getPath('./src'),
+  },
+}
+
+// Exported so the root config can register these projects directly. Vitest
+// does not expand projects nested inside a project config.
+export const integrationProjects = [
+  {
+    resolve: sharedResolve,
+    test: {
+      ...sharedTest,
+      name: 'backend-integration',
+      include: [ITEST_INCLUDE],
+      exclude: isolatedItests,
+      isolate: false,
+      env: {
+        PLUMBER_ITEST_PROJECT: 'shared',
       },
     },
-    include: ['src/**/*.itest.{js,ts}'],
-    onConsoleLog: (log: string, _type: 'stdout' | 'stderr'): false | void => {
-      if (log.startsWith('vite:')) {
-        return false
-      }
+  },
+  {
+    resolve: sharedResolve,
+    test: {
+      ...sharedTest,
+      name: 'backend-integration-isolated',
+      include: isolatedItests,
+      isolate: true,
+      env: {
+        PLUMBER_ITEST_PROJECT: 'isolated',
+      },
     },
   },
-  resolve: {
-    alias: {
-      '@': getPath('./src'),
-    },
+]
+
+export default defineConfig({
+  test: {
+    maxWorkers: integrationMaxWorkers,
+    projects: integrationProjects,
   },
+  resolve: sharedResolve,
 })

@@ -5,7 +5,6 @@ import {
   createEmailMetadata,
 } from '../../common/data-out-metadata-helpers'
 import { decodeFieldName } from '../../common/utils'
-
 import { dataOutSchema } from './schema'
 
 type Attachment = {
@@ -58,7 +57,7 @@ function resolveAttachments(
 
 async function getDataOutMetadata(
   step: IExecutionStep,
-): Promise<IDataOutMetadata> {
+): Promise<IDataOutMetadata | null> {
   const { dataOut: rawDataOut } = step
   if (!rawDataOut) {
     return null
@@ -70,6 +69,9 @@ async function getDataOutMetadata(
   }
 
   const { data: dataOut } = parsedDataOut.data
+  if (!dataOut) {
+    return null
+  }
 
   const metadata = {
     data: {

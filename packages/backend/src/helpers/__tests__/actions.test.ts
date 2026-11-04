@@ -1,19 +1,17 @@
 import type { IActionJobData, IApp, IJSONObject } from '@plumber/types'
-
 import {
   type JobPro,
   UnrecoverableError,
   WorkerPro,
 } from '@taskforcesh/bullmq-pro'
-import type { AxiosError } from 'axios'
 import { type Span } from 'dd-trace'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import HttpError from '@/errors/http'
 import RetriableError from '@/errors/retriable-error'
 import StepError from '@/errors/step'
 import Step from '@/models/step'
 
+import { makeHttpError } from '../../../test/utils/make-http-error'
 import { doesActionProcessFiles, handleFailedStepAndThrow } from '../actions'
 
 const mocks = vi.hoisted(() => ({
@@ -63,6 +61,7 @@ vi.mock('@/models/execution', () => ({
 
 describe('action helper functions', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -109,7 +108,7 @@ describe('action helper functions', () => {
   })
 
   describe('handleFailedStepAndThrow', () => {
-    const EMPTY_HTTP_ERROR = new HttpError({} as unknown as AxiosError)
+    const EMPTY_HTTP_ERROR = makeHttpError()
 
     beforeEach(() => {
       vi.useFakeTimers()
@@ -128,13 +127,11 @@ describe('action helper functions', () => {
         ({ retryAfter, expectedResult }) => {
           vi.setSystemTime(new Date('31 Oct 2023 00:00:00 GMT'))
 
-          const error = new HttpError({
-            response: {
-              headers: {
-                'retry-after': retryAfter,
-              },
+          const error = makeHttpError({
+            headers: {
+              'retry-after': retryAfter,
             },
-          } as unknown as AxiosError)
+          })
 
           try {
             handleFailedStepAndThrow({
@@ -158,13 +155,11 @@ describe('action helper functions', () => {
         'does not retry Retry-After ($retryAfter) if wait is too long',
         ({ retryAfter }) => {
           vi.setSystemTime(new Date('31 Oct 2023 00:00:00 GMT'))
-          const error = new HttpError({
-            response: {
-              headers: {
-                'retry-after': retryAfter,
-              },
+          const error = makeHttpError({
+            headers: {
+              'retry-after': retryAfter,
             },
-          } as unknown as AxiosError)
+          })
 
           try {
             handleFailedStepAndThrow({
@@ -189,13 +184,11 @@ describe('action helper functions', () => {
         'does not retry Retry-After if value ("$retryAfter") is invalid',
         ({ retryAfter }) => {
           vi.setSystemTime(new Date('31 Oct 2023 00:00:00 GMT'))
-          const error = new HttpError({
-            response: {
-              headers: {
-                'retry-after': retryAfter,
-              },
+          const error = makeHttpError({
+            headers: {
+              'retry-after': retryAfter,
             },
-          } as unknown as AxiosError)
+          })
 
           expect(() =>
             handleFailedStepAndThrow({
@@ -203,23 +196,21 @@ describe('action helper functions', () => {
               executionError: error,
               context: MOCK_CONTEXT,
             }),
-          ).toThrowError(UnrecoverableError)
+          ).toThrow(UnrecoverableError)
         },
       )
 
       it.each([504, 429])('retries some http status codes (%d)', (code) => {
-        const error = new HttpError({
-          response: {
-            status: code,
-          },
-        } as unknown as AxiosError)
+        const error = makeHttpError({
+          status: code,
+        })
         expect(() =>
           handleFailedStepAndThrow({
             errorDetails: {},
             executionError: error,
             context: MOCK_CONTEXT,
           }),
-        ).toThrowError(RetriableError)
+        ).toThrow(RetriableError)
       })
 
       it.each([
@@ -234,7 +225,7 @@ describe('action helper functions', () => {
               executionError: EMPTY_HTTP_ERROR,
               context: MOCK_CONTEXT,
             }),
-          ).toThrowError(RetriableError)
+          ).toThrow(RetriableError)
         },
       )
     })
@@ -258,8 +249,8 @@ describe('action helper functions', () => {
           expect(e.name).toEqual(BULLMQ_RATE_LIMIT_ERROR.name)
           expect(e.message).toEqual(BULLMQ_RATE_LIMIT_ERROR.message)
 
-          expect(mocks.workerRateLimit).toBeCalledWith(100)
-          expect(mocks.workerRateLimitGroup).not.toBeCalled()
+          expect(mocks.workerRateLimit).toHaveBeenCalledWith(100)
+          expect(mocks.workerRateLimitGroup).not.toHaveBeenCalled()
         }
       })
 
@@ -276,8 +267,8 @@ describe('action helper functions', () => {
           }),
         ).toThrow(RetriableError)
 
-        expect(mocks.workerRateLimit).not.toBeCalled()
-        expect(mocks.workerRateLimitGroup).not.toBeCalled()
+        expect(mocks.workerRateLimit).not.toHaveBeenCalled()
+        expect(mocks.workerRateLimitGroup).not.toHaveBeenCalled()
       })
 
       it("delays the job's group if delayType is group", () => {
@@ -306,8 +297,8 @@ describe('action helper functions', () => {
           expect(e.name).toEqual(BULLMQ_RATE_LIMIT_ERROR.name)
           expect(e.message).toEqual(BULLMQ_RATE_LIMIT_ERROR.message)
 
-          expect(mocks.workerRateLimitGroup).toBeCalledWith(job, 100)
-          expect(mocks.workerRateLimit).not.toBeCalled()
+          expect(mocks.workerRateLimitGroup).toHaveBeenCalledWith(job, 100)
+          expect(mocks.workerRateLimit).not.toHaveBeenCalled()
         }
       })
 
@@ -324,8 +315,8 @@ describe('action helper functions', () => {
           }),
         ).toThrow(RetriableError)
 
-        expect(mocks.workerRateLimit).not.toBeCalled()
-        expect(mocks.workerRateLimitGroup).not.toBeCalled()
+        expect(mocks.workerRateLimit).not.toHaveBeenCalled()
+        expect(mocks.workerRateLimitGroup).not.toHaveBeenCalled()
       })
 
       it('throws the original RetriableError if delayType is step', () => {
@@ -353,13 +344,11 @@ describe('action helper functions', () => {
           stepError: new StepError(
             'http-step-error',
             'test solution',
-            new HttpError({
-              response: {
-                headers: {
-                  'retry-after': '15',
-                },
+            makeHttpError({
+              headers: {
+                'retry-after': '15',
               },
-            } as unknown as AxiosError),
+            }),
           ),
           isRetried: true,
         },
@@ -379,9 +368,57 @@ describe('action helper functions', () => {
               executionError: stepError,
               context: MOCK_CONTEXT,
             }),
-          ).toThrowError(expectedErrorType)
+          ).toThrow(expectedErrorType)
         },
       )
+
+      it.each([
+        new StepError({ name: 'n', solution: 's', kind: 'config' }),
+        new StepError({ name: 'n', solution: 's', kind: 'third-party' }),
+        new StepError('n', 's', EMPTY_HTTP_ERROR),
+      ])(
+        'attaches the StepError as a non-enumerable cause of the UnrecoverableError',
+        (stepError) => {
+          let thrown: unknown
+          try {
+            handleFailedStepAndThrow({
+              errorDetails: {},
+              executionError: stepError,
+              context: MOCK_CONTEXT,
+            })
+          } catch (e) {
+            thrown = e
+          }
+
+          expect(thrown).toBeInstanceOf(UnrecoverableError)
+          expect((thrown as Error).cause).toBe(stepError)
+          expect(Object.keys(thrown as Error)).not.toContain('cause')
+        },
+      )
+
+      it('attaches the StepError as a non-enumerable cause of a new RetriableError', () => {
+        const stepError = new StepError({
+          name: 'n',
+          solution: 's',
+          kind: 'third-party',
+          cause: makeHttpError({ status: 504 }),
+        })
+
+        let thrown: unknown
+        try {
+          handleFailedStepAndThrow({
+            errorDetails: {},
+            executionError: stepError,
+            context: MOCK_CONTEXT,
+          })
+        } catch (e) {
+          thrown = e
+        }
+
+        expect(thrown).toBeInstanceOf(RetriableError)
+        expect((thrown as Error).cause).toBe(stepError)
+        expect(Object.keys(thrown as Error)).not.toContain('cause')
+      })
 
       it.each([
         {
@@ -433,7 +470,7 @@ describe('action helper functions', () => {
               executionError,
               context: MOCK_CONTEXT,
             }),
-          ).toThrowError(UnrecoverableError)
+          ).toThrow(UnrecoverableError)
         },
       )
     })
@@ -462,7 +499,7 @@ describe('action helper functions', () => {
               context: MOCK_CONTEXT,
             }),
           ).toThrow()
-          expect(mocks.addSpanTags).toBeCalledWith({
+          expect(mocks.addSpanTags).toHaveBeenCalledWith({
             willRetry: expectedTagValue,
           })
         },

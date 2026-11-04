@@ -1,11 +1,26 @@
 import type { IStep } from '@plumber/types'
-
 import { describe, expect, it } from 'vitest'
 
 import { StepEnumType } from '@/graphql/__generated__/types.generated'
 import { actionStepsSchema } from '@/graphql/mutations/ai/schemas/action-steps-schema'
 
 describe('actionStepsSchema validation', () => {
+  describe('hidden actions', () => {
+    it('should reject a system-managed action like FormSG mrfSubmission', () => {
+      const steps = [
+        {
+          type: 'action' as StepEnumType,
+          appKey: 'formsg',
+          key: 'mrfSubmission',
+          position: 2,
+          config: {},
+        },
+      ]
+
+      expect(actionStepsSchema.safeParse(steps).success).toBe(false)
+    })
+  })
+
   describe('basic validation', () => {
     it('should accept valid action steps', () => {
       const steps = [
@@ -245,7 +260,7 @@ describe('actionStepsSchema validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         expect(result.error.issues[0].message).toContain(
-          'If-then actions must have another action immediately after them',
+          'Cannot have empty If block',
         )
       }
     })
@@ -280,7 +295,7 @@ describe('actionStepsSchema validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         expect(result.error.issues[0].message).toContain(
-          'If-then actions cannot be consecutive',
+          'Cannot have empty If block',
         )
       }
     })
@@ -327,6 +342,95 @@ describe('actionStepsSchema validation', () => {
 
       const result = actionStepsSchema.safeParse(steps)
       expect(result.success).toBe(true)
+    })
+  })
+
+  describe('explicit If blocks (ifThenChildCount)', () => {
+    const ifThen = (position: number, ifThenChildCount: number) => ({
+      type: 'action' as StepEnumType,
+      appKey: 'toolbox',
+      key: 'ifThen',
+      position,
+      config: {},
+      parameters: { depth: 0, branchName: 'If' },
+      ifThenChildCount,
+    })
+    const email = (position: number) => ({
+      type: 'action' as StepEnumType,
+      appKey: 'postman',
+      key: 'sendTransactionalEmail',
+      position,
+      config: {},
+    })
+    const forEach = (position: number) => ({
+      type: 'action' as StepEnumType,
+      appKey: 'toolbox',
+      key: 'forEach',
+      position,
+      config: {},
+    })
+
+    it('accepts a step after an If block', () => {
+      const result = actionStepsSchema.safeParse([
+        ifThen(2, 1),
+        email(3),
+        email(4),
+      ])
+      expect(result.success).toBe(true)
+      expect(result.data?.[0].ifThenChildCount).toBe(1)
+    })
+
+    it('accepts a for-each after an If block', () => {
+      const result = actionStepsSchema.safeParse([
+        ifThen(2, 1),
+        email(3),
+        forEach(4),
+        email(5),
+      ])
+      expect(result.success).toBe(true)
+    })
+
+    it('rejects a nested If block', () => {
+      const result = actionStepsSchema.safeParse([
+        ifThen(2, 2),
+        ifThen(3, 1),
+        email(4),
+      ])
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain(
+          'If blocks cannot be nested inside another If block',
+        )
+      }
+    })
+
+    it('rejects a for-each inside an If block', () => {
+      const result = actionStepsSchema.safeParse([
+        ifThen(2, 2),
+        forEach(3),
+        email(4),
+      ])
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain(
+          'For-each action cannot be placed inside an If block',
+        )
+      }
+    })
+
+    it('rejects a block that extends past the last step', () => {
+      const result = actionStepsSchema.safeParse([ifThen(2, 2), email(3)])
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain(
+          'If block extends past the last step of the pipe',
+        )
+      }
+    })
+
+    it('rejects ifThenChildCount of 0', () => {
+      const result = actionStepsSchema.safeParse([ifThen(2, 0), email(3)])
+      expect(result.success).toBe(false)
     })
   })
 
@@ -413,7 +517,7 @@ describe('actionStepsSchema validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         expect(result.error.issues[0].message).toContain(
-          'For-each action cannot be placed after an if-then action',
+          'For-each action cannot be placed inside an If block',
         )
       }
     })
@@ -498,7 +602,7 @@ describe('actionStepsSchema validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         expect(result.error.issues[0].message).toContain(
-          'For-each action cannot be placed after an if-then action',
+          'For-each action cannot be placed inside an If block',
         )
       }
     })
@@ -866,7 +970,7 @@ describe('actionStepsSchema validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         expect(result.error.issues[0].message).toContain(
-          'For-each action cannot be placed after an if-then action',
+          'For-each action cannot be placed inside an If block',
         )
       }
     })
@@ -905,7 +1009,7 @@ describe('actionStepsSchema validation', () => {
       if (!result.success) {
         // Should have error about for-each after if-then
         const hasForEachError = result.error.issues.some((err) =>
-          err.message.includes('For-each action cannot be placed after'),
+          err.message.includes('For-each action cannot be placed inside'),
         )
         expect(hasForEachError).toBe(true)
       }
@@ -952,7 +1056,7 @@ describe('actionStepsSchema validation', () => {
       if (!result.success) {
         // Should have error about for-each after if-then
         const hasForEachError = result.error.issues.some((err) =>
-          err.message.includes('For-each action cannot be placed after'),
+          err.message.includes('For-each action cannot be placed inside'),
         )
         expect(hasForEachError).toBe(true)
       }

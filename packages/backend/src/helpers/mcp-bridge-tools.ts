@@ -1,5 +1,4 @@
 import type { IApp, IJSONObject, IMcpApp } from '@plumber/types'
-
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 
@@ -9,6 +8,7 @@ import { wrapMcpToolsWithUsageLogs } from '@/helpers/mcp-tool-usage-log'
 import type Flow from '@/models/flow'
 import type Step from '@/models/step'
 import type User from '@/models/user'
+import { MrfPipeStepsError } from '@/services/mcp/add-mrf-actions'
 import {
   type AddTileColumnsResult,
   addTileColumnsService,
@@ -16,7 +16,8 @@ import {
 import { listAppsService } from '@/services/mcp/apps'
 import {
   createFlowWithStepsService,
-  type McpStepInput,
+  flattenNestedSteps,
+  type McpNestedStepInput,
 } from '@/services/mcp/create-flow-with-steps'
 import { createStepService } from '@/services/mcp/create-step'
 import {
@@ -28,6 +29,7 @@ import {
   executeStepService,
   type McpExecuteStepResult,
 } from '@/services/mcp/execute-step'
+import { getFlowService, type McpFlow } from '@/services/mcp/get-flow'
 import {
   getFormSchemaService,
   type McpFormSchemaResult,
@@ -81,6 +83,73 @@ function publishedPipeOrThrow(error: unknown): PublishedPipeErrorResult {
   throw error
 }
 
+const pipeStepInputSchema = z.object({
+  app_key: z.string().describe('App key (e.g. "formsg", "slack")'),
+  trigger_key: z
+    .string()
+    .optional()
+    .describe('Trigger key for step 0 (e.g. "newSubmission")'),
+  action_key: z
+    .string()
+    .optional()
+    .describe('Action key for steps 1+ (e.g. "sendMessageToChannel")'),
+  parameters: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Optional initial values. Normally omitted: the chat flow saves every value, including If-then conditions, with update_step_parameters after creation.',
+    ),
+})
+
+const nestedPipeStepInputSchema = pipeStepInputSchema.extend({
+  steps: z
+    .array(pipeStepInputSchema)
+    .optional()
+    .describe(
+      'Only on a toolbox/ifThen step: the steps inside this If block, in order. They run only when the condition is TRUE. Must contain at least one step, and none of them may be another toolbox/ifThen or a toolbox/forEach.',
+    ),
+})
+
+function toNestedStepInput(
+  step: z.infer<typeof pipeStepInputSchema>,
+): McpNestedStepInput {
+  return {
+    appKey: step.app_key,
+    key: step.trigger_key ?? step.action_key ?? null,
+    ...(step.parameters && { parameters: step.parameters }),
+  }
+}
+
+const createPipeDescription =
+  "Create a new inactive pipe with an ordered list of steps. First step is the trigger, subsequent steps are actions. Always creates inactive — never activate without explicit user confirmation. Pass only each step's app and trigger or action key. Every value, including If-then conditions, is saved with update_step_parameters once the step ids exist."
+
+const ifBlockGuidance =
+  'A toolbox/ifThen step is an If block: put the steps that should run only when its condition is TRUE inside its own `steps` array (at least one). Steps listed after the ifThen entry in the outer list are outside the block and run regardless of the condition. An If block cannot contain another ifThen or a forEach.'
+
+const mrfPipeGuidance =
+  'For a FormSG trigger, pass form_url whenever you know the form URL. If the form is an MRF form, Plumber creates one step per later stage and places each action after its stage. Then every action needs mrf_stage, and mrf_branch "reject" for an action on a reject path. The returned steps include the stage steps. Do not list the stage steps yourself.'
+
+const mrfPlacementSchema = z.object({
+  mrf_stage: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "MRF form only. The stage this action follows, numbered as in get_form_schema's mrfStages (1 is the trigger's stage). Every action of an MRF pipe needs it. Steps inside an If block follow their If step.",
+    ),
+  mrf_branch: z
+    .enum(['approve', 'reject'])
+    .optional()
+    .describe(
+      "MRF form only. 'reject' puts the action on the reject path of an approval stage. Defaults to 'approve'. Only stages with isApproval have a reject path.",
+    ),
+})
+
+const mrfNestedPipeStepInputSchema = nestedPipeStepInputSchema.extend(
+  mrfPlacementSchema.shape,
+)
+
 export function createMcpBridgeTools(
   user: User,
   traceId: string,
@@ -113,6 +182,17 @@ export function createMcpBridgeTools(
       }),
       execute: async ({ step_id }): Promise<ListColumnsResult> => {
         return listColumnsService({ user, stepId: step_id })
+      },
+    }),
+
+    get_flow: tool({
+      description:
+        "Get a pipe's current steps in position order. This includes the hidden FormSG MRF stage steps (appKey 'formsg', key 'mrfSubmission'). create_pipe creates them when given form_url, and testing the trigger syncs them with the form. Identify a stage step by its appKey and key. Identify an approval stage by parameters.mrf.approvalField. A step on a reject path has config.approval ({ branch: 'reject', stepId }). Stage steps are system-managed. Never create, delete or reorder them. create_step rejects it. Stored credentials in parameters appear as '[REDACTED]'. Never send '[REDACTED]' back in update_step_parameters.",
+      inputSchema: z.object({
+        pipe_id: z.uuid().describe('ID of the pipe to fetch'),
+      }),
+      execute: async ({ pipe_id }): Promise<McpFlow> => {
+        return getFlowService({ user, pipeId: pipe_id })
       },
     }),
 
@@ -193,52 +273,46 @@ export function createMcpBridgeTools(
     }),
 
     create_pipe: tool({
-      description:
-        'Create a new inactive pipe with an ordered list of steps. First step is the trigger, subsequent steps are actions. Always creates inactive — never activate without explicit user confirmation. For toolbox/ifThen and toolbox/onlyContinueIf steps, include parameters with conditions (and branchName for ifThen) in the step — see the parameters field for the conditions shape.',
+      description: `${createPipeDescription}\n\n${ifBlockGuidance}\n\n${mrfPipeGuidance}`,
       inputSchema: z.object({
         name: z.string().describe('Human-readable name for the pipe'),
         steps: z
-          .array(
-            z.object({
-              app_key: z.string().describe('App key (e.g. "formsg", "slack")'),
-              trigger_key: z
-                .string()
-                .optional()
-                .describe('Trigger key for step 0 (e.g. "newSubmission")'),
-              action_key: z
-                .string()
-                .optional()
-                .describe(
-                  'Action key for steps 1+ (e.g. "sendMessageToChannel")',
-                ),
-              parameters: z
-                .record(z.string(), z.unknown())
-                .optional()
-                .describe(
-                  'Initial parameter values for this step. For toolbox/ifThen and toolbox/onlyContinueIf steps, conditions is an array of OR-groups, each { rows: [...] }, where each row is { field, is: "is"|"not", condition, text }, e.g. conditions: [{ rows: [{ field: "{{1.status}}", is: "is", condition: "equals", text: "done" }] }]. ifThen additionally requires branchName.',
-                ),
-            }),
-          )
+          .array(mrfNestedPipeStepInputSchema)
           .min(1)
           .describe(
             'Ordered list of steps. First element must have trigger_key.',
           ),
-      }),
-      execute: async ({ name, steps }): Promise<Flow> => {
-        const flow = await createFlowWithStepsService({
-          user,
-          name,
-          steps: steps.map(
-            (s, index): McpStepInput => ({
-              appKey: s.app_key,
-              key: s.trigger_key ?? s.action_key ?? null,
-              type: index === 0 ? 'trigger' : 'action',
-              position: index + 1,
-              ...(s.parameters && { parameters: s.parameters }),
-            }),
+        form_url: z
+          .string()
+          .optional()
+          .describe(
+            "The FormSG form's URL or ID. Pass it whenever you know it for a FormSG trigger. Plumber uses it to create an MRF form's stage steps. A form that is not MRF is built as a normal pipe.",
           ),
-          traceId,
-        })
+      }),
+      execute: async ({ name, steps, form_url }): Promise<Flow> => {
+        let flow: Flow
+        try {
+          flow = await createFlowWithStepsService({
+            user,
+            name,
+            steps: flattenNestedSteps(
+              steps.map((s): McpNestedStepInput => ({
+                ...toNestedStepInput(s),
+                ...(s.mrf_stage && { mrfStage: s.mrf_stage }),
+                ...(s.mrf_branch && { mrfBranch: s.mrf_branch }),
+                ...(s.steps && { steps: s.steps.map(toNestedStepInput) }),
+              })),
+            ),
+            traceId,
+            ...(form_url && { formUrl: form_url }),
+          })
+        } catch (error) {
+          // The pipe exists already, so the preview must still show it.
+          if (error instanceof MrfPipeStepsError) {
+            onPipeChange?.(error.flowId)
+          }
+          throw error
+        }
         onPipeChange?.(flow.id)
         return flow
       },
@@ -277,7 +351,7 @@ export function createMcpBridgeTools(
         parameters: z
           .record(z.string(), z.unknown())
           .describe(
-            "Parameter key/value pairs to save. Only keys matching the step's field schema are kept.",
+            'Parameter key/value pairs to save. Only keys matching the step\'s field schema are kept. For toolbox/ifThen and toolbox/onlyContinueIf steps, conditions is an array of OR-groups, each { rows: [...] }, where each row is { field, is: "is"|"not", condition, text }, e.g. conditions: [{ rows: [{ field: "{{step.<uuid>.fields.status.answer}}", is: "is", condition: "equals", text: "done" }] }]. ifThen additionally requires branchName.',
           ),
         connection_id: z
           .uuid()
@@ -319,7 +393,7 @@ export function createMcpBridgeTools(
 
     create_step: tool({
       description:
-        'Add a new action step to an existing pipe. Validates that the app key and action key exist. Inserts after previousStepId. Returns the created step.',
+        "Add a new action step to an existing pipe. Validates that the app key and action key exist. Inserts after previousStepId. Returns the created step.\n\nIf blocks: a step inserted after a toolbox/ifThen step, or after any step inside its block, lands inside that block and runs only when the condition is TRUE. To place a step after the whole block (it then always runs), pass after_if_then_block: true with previous_step_id set to the ifThen step (or its last inner step). Creating a toolbox/ifThen makes an empty If block: add its inner steps next with previous_step_id set to the new ifThen id. An If block cannot contain another ifThen or a forEach.\n\nTo route a step into an MRF approval step's reject path, pass approval_branch with step_id set to that approval step's own id (from get_flow, where parameters.mrf.approvalField is set). Omit it for the approve/continue path when inserting after an approval step. Later steps inherit the previous step's reject branch, including If steps, their inner steps, and steps after the block. For those steps, set previous_step_id to the last step in that branch. If approval_branch is supplied, its step_id must remain the original approval step's id.",
       inputSchema: z.object({
         pipe_id: z.uuid().describe('ID of the pipe to add the step to'),
         app_key: z.string().describe('App key (e.g. "slack")'),
@@ -331,12 +405,29 @@ export function createMcpBridgeTools(
           .describe(
             "ID of the step after which to insert. Pass the last step's id to append at the end.",
           ),
+        after_if_then_block: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set true to insert after the whole If block that previous_step_id belongs to, outside it, instead of inside. previous_step_id must then be the ifThen step or the last step inside its block.',
+          ),
+        approval_branch: z
+          .object({
+            branch: z.literal('reject'),
+            step_id: z.uuid(),
+          })
+          .optional()
+          .describe(
+            "Start the reject path of the MRF approval step at step_id. Later steps inherit the previous step's branch when omitted. After an approval step, omitting this selects the approve/continue path.",
+          ),
       }),
       execute: async ({
         pipe_id,
         app_key,
         action_key,
         previous_step_id,
+        after_if_then_block,
+        approval_branch,
       }): Promise<Step | McpToolError> => {
         try {
           const step = await createStepService({
@@ -346,6 +437,13 @@ export function createMcpBridgeTools(
             key: action_key,
             previousStepId: previous_step_id,
             traceId,
+            ...(after_if_then_block && { afterIfThenBlock: true }),
+            approvalBranch: approval_branch
+              ? {
+                  branch: approval_branch.branch,
+                  stepId: approval_branch.step_id,
+                }
+              : undefined,
           })
           onPipeChange?.(pipe_id)
           return step
@@ -357,7 +455,7 @@ export function createMcpBridgeTools(
 
     delete_step: tool({
       description:
-        'Delete a single step from a pipe. Deleting a trigger replaces it with an empty trigger slot; deleting an action removes it and repositions the remaining steps. Steps that reference the deleted step are marked incomplete. Returns the updated pipe with all remaining steps.',
+        'Delete a step from a pipe. Deleting a trigger replaces it with an empty trigger slot. Deleting an action removes it and repositions the remaining steps. Deleting a toolbox/ifThen step removes the whole If block, the If step and every step inside it, the same as deleting the block in the pipe editor. Before calling this on an ifThen step, name the steps inside the block and wait for the user to explicitly confirm. Do not call it on an ifThen step until they confirm. Deleting a step inside the block removes only that step. Steps that reference a deleted step are marked incomplete. Returns the updated pipe with all remaining steps.',
       inputSchema: z.object({
         pipe_id: z.uuid().describe('ID of the pipe that contains the step'),
         step_id: z.uuid().describe('ID of the step to delete'),
@@ -380,7 +478,7 @@ export function createMcpBridgeTools(
 
     execute_step: tool({
       description:
-        "Test a configured step in a pipe. Runs the step, marks it as completed on success, and returns its output data. Call after update_step_parameters to verify the step works. The returned dataOut will be used to wire variables into downstream steps; dataOutMetadata tags each dataOut key with a type (e.g. 'array', 'table') — cross-check this against a downstream field's variableTypes (from list_apps) before templating a {{step.X.path}} reference into that field. Warning: for steps that send a real message (SMS by Postman sendSms, Telegram sendMessage, Slack sendMessageToChannel, PaySG sendEmail), this actually sends it to the configured recipient/channel/number — confirm the details with the user before calling this for those steps.",
+        "Test a configured step in a pipe. Runs the step, marks it as completed on success, and returns its output data. Call after update_step_parameters to verify the step works. An MRF form is tested as a whole from its trigger. If a stage step fails, success is false, failedStepId names that stage step and errorDetails holds its error. The returned dataOut will be used to wire variables into downstream steps; dataOutMetadata tags each dataOut key with a type (e.g. 'array', 'table') — cross-check this against a downstream field's variableTypes (from list_apps) before templating a {{step.X.path}} reference into that field. Warning: for steps that send a real message (SMS by Postman sendSms, Telegram sendMessage, Slack sendMessageToChannel, PaySG sendEmail), this actually sends it to the configured recipient/channel/number — confirm the details with the user before calling this for those steps.",
       inputSchema: z.object({
         step_id: z.uuid().describe('ID of the step to test'),
       }),
@@ -408,7 +506,9 @@ export function createMcpBridgeTools(
         'Requires no connection and no secret key, so it can be used before a pipe or connection exists. ' +
         'Returns the form title, storage-mode/MRF flags, warnings, and per-field ' +
         '{ id, title, fieldType, required, answerType, variablePath } for templating variables as ' +
-        '{{step.<triggerStepId>.<variablePath>}}. Errors are returned as { error } — relay them to the user.',
+        '{{step.<triggerStepId>.<variablePath>}}. For an MRF form it also returns mrfStages, the workflow stages in order ' +
+        '({ name, isApproval, approvalFieldId?, fieldIds }). The first stage is the trigger. isApproval marks a stage that needs an approve/reject answer. ' +
+        'Errors are returned as { error } — relay them to the user.',
       inputSchema: z.object({
         form_url: z
           .string()

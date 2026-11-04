@@ -1,20 +1,18 @@
+import type { JobsProOptions, WorkerProOptions } from '@taskforcesh/bullmq-pro'
 import type {
   AxiosInstance,
   AxiosRequestConfig,
   InternalAxiosRequestConfig,
 } from 'axios'
+import type { Request } from 'express'
+import type { RelatedQueryBuilder } from 'objection'
+import type { JsonArray, JsonObject, JsonPrimitive, JsonValue } from 'type-fest'
 
 // FIXME (ogp-weeloong): temporarily importing these to migrate from IJSON...
 // types to type-fest.
-import type { JsonArray, JsonObject, JsonPrimitive, JsonValue } from 'type-fest'
-
-import type { JobsProOptions, WorkerProOptions } from '@taskforcesh/bullmq-pro'
-import type { RelatedQueryBuilder } from 'objection'
-
-import HttpError from '@/errors/http'
+import type HttpError from '@/errors/http'
 
 export type IHttpClient = AxiosInstance
-import type { Request } from 'express'
 
 export type IJSONPrimitive = JsonPrimitive
 export type IJSONValue = IJSONPrimitive | IJSONObject | IJSONArray | JsonValue
@@ -135,14 +133,15 @@ export interface IExecutionStep {
   step: IStep
   dataIn: IJSONObject
   dataOut: IJSONObject
-  errorDetails: IJSONObject
+  errorDetails?: IJSONObject | null
   status: 'success' | 'failure'
-  appKey: string
+  appKey?: string | null
   jobId?: string
   createdAt: string
   updatedAt: string
   metadata: IExecutionStepMetadata
-  key: string
+  key?: string | null
+  iconUrl?: string | null
 
   // Only resolved on the front end via GraphQL.
   dataOutMetadata?: IDataOutMetadata
@@ -237,6 +236,8 @@ export interface IFlowConfig {
   rejectIfOverMaxQps?: boolean
   errorConfig?: IFlowErrorConfig
   duplicateCount?: number
+  // The pipe this one was copied from directly. Follow it back to find the original.
+  duplicatedFromFlowId?: string
   templateConfig?: IFlowTemplateConfig
   attachments?: IFlowAttachmentsConfig[]
   // AI Builder config
@@ -292,7 +293,7 @@ export interface IFlow {
   steps: IStep[]
   createdAt: string
   updatedAt: string
-  remoteWebhookId: string
+  remoteWebhookId?: string | null
   lastInternalId: () => Promise<string>
   config: IFlowConfig | null
   pendingTransfer?: IFlowTransfer
@@ -1100,7 +1101,9 @@ export interface IBaseTrigger {
    *
    * @param executionStep The execution step to get metadata for.
    */
-  getDataOutMetadata?(executionStep: IExecutionStep): Promise<IDataOutMetadata>
+  getDataOutMetadata?(
+    executionStep: IExecutionStep,
+  ): Promise<IDataOutMetadata | null>
 
   /**
    * Triggers specify this if they want to display an additional informative
@@ -1237,7 +1240,9 @@ export interface IBaseAction {
    *
    * @param executionStep The execution step to get metadata for.
    */
-  getDataOutMetadata?(executionStep: IExecutionStep): Promise<IDataOutMetadata>
+  getDataOutMetadata?(
+    executionStep: IExecutionStep,
+  ): Promise<IDataOutMetadata | null>
 
   /**
    * Preprocess variables before substituting them into the action's parameters.
@@ -1321,9 +1326,12 @@ export type IGlobalVariable = {
     connectionId?: string
   }
   app: IApp
-  http?: IHttpClient
+  // helpers/global-variable.ts is the sole constructor of $, and it always
+  // populates these as containers (inner fields may still be undefined when
+  // there's no real step/flow, e.g. in auth callbacks).
+  http: IHttpClient
   request?: IRequest
-  flow?: {
+  flow: {
     id: string
     name: string
     hasFileProcessingActions: boolean
@@ -1332,7 +1340,7 @@ export type IGlobalVariable = {
     setRemoteWebhookId?: (remoteWebhookId: string) => Promise<void>
     isActive: boolean
   }
-  step?: {
+  step: {
     id: string
     appKey: string
     key: string
@@ -1340,12 +1348,12 @@ export type IGlobalVariable = {
     parameters: IJSONObject
     version: number
   }
-  nextStep?: {
+  nextStep: {
     id: string
     appKey: string
     parameters: IJSONObject
   }
-  getLastExecutionStep?: (
+  getLastExecutionStep: (
     options?: Partial<{
       sameExecution: boolean
       testRunOnly: boolean
@@ -1355,16 +1363,16 @@ export type IGlobalVariable = {
       iteration?: number
     }>,
   ) => Promise<IExecutionStep | undefined>
-  execution?: {
+  execution: {
     id: string
     testRun: boolean
   }
   metadata?: IJSONObject
   webhookUrl?: string
-  triggerOutput?: ITriggerOutput
-  actionOutput?: IActionOutput
-  pushTriggerItem?: (triggerItem: ITriggerItem) => Promise<void>
-  setActionItem?: (actionItem: IActionItem) => void
+  triggerOutput: ITriggerOutput
+  actionOutput: IActionOutput
+  pushTriggerItem: (triggerItem: ITriggerItem) => Promise<void>
+  setActionItem: (actionItem: IActionItem) => void
 
   /**
    * If this is non-null, it contains details of the pipe owner if this is
@@ -1379,6 +1387,14 @@ export type IGlobalVariable = {
    * always.
    */
   user?: IUser
+
+  /**
+   * User who started this operation from the UI or MCP. Unset for background
+   * runs.
+   *
+   * IMPORTANT: Use `user` for access checks so test runs match production.
+   */
+  loggedInUser?: IUser
 }
 
 declare module 'axios' {
@@ -1400,13 +1416,20 @@ export interface IVerifyConnectionRegistrationOutput {
   message: string
 }
 
-export interface ITestConnectionOutput
-  extends Partial<IVerifyConnectionRegistrationOutput> {
+export interface ITestConnectionOutput extends Partial<IVerifyConnectionRegistrationOutput> {
   connectionVerified: boolean
 }
+/**
+ * - `config`: the user's configuration caused the failure.
+ * - `third-party`: an external service failed.
+ * - `internal`: a Plumber bug.
+ */
+export type StepErrorKind = 'config' | 'third-party' | 'internal'
+
 export interface IStepError {
   name: string
   solution: string
+  kind?: StepErrorKind
   details?: IJSONObject
   partialRetry?: {
     buttonMessage: string
@@ -1543,6 +1566,8 @@ export interface IFlowStepsTrigger {
   appKey: string
   key: string
   description: string
+  // Set only on an MRF proposal's trigger, to the form's first stage name.
+  config?: { stepName: string }
 }
 
 export interface IFlowStepsAction {
@@ -1555,6 +1580,13 @@ export interface IFlowStepsAction {
     templateConfig?: Record<string, string>
   }
   parameters?: { depth: 0; branchName: string }
+  // Number of following actions inside this If block. Only set on if-then
+  // actions laid out with explicit blocks.
+  ifThenChildCount?: number
+  // Set on an MRF stage entry that routes by approval. Preview only.
+  isApproval?: boolean
+  // Set on an action that runs when the approval stage rejects. Preview only.
+  approvalBranch?: 'reject'
 }
 
 export interface IFlowSteps {

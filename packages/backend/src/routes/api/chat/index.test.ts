@@ -1,3 +1,4 @@
+import type { Request, Response } from 'express'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -77,6 +78,7 @@ vi.mock('@/helpers/ai/get-ai-builder-flag', () => ({
       chatPromptName: 'chat',
       chatSummaryPromptName: 'chat-summary',
       version: 'production',
+      disabledMcpServers: [],
     },
   }),
 }))
@@ -118,9 +120,10 @@ vi.mock('@opentelemetry/api', () => ({
 }))
 
 import { experimental_createMCPClient } from '@ai-sdk/mcp'
-import { createUIMessageStream, streamText } from 'ai'
+import { convertToModelMessages, createUIMessageStream, streamText } from 'ai'
 
 import { getAiBuilderFlag } from '@/helpers/ai/get-ai-builder-flag'
+import logger from '@/helpers/logger'
 import Connection from '@/models/connection'
 import Flow from '@/models/flow'
 
@@ -161,7 +164,7 @@ describe('chat handler — GitBook MCP integration', () => {
       get_page: vi.fn(),
     }
     const mockBridgeTools = { list_apps: vi.fn() }
-    const mockClose = vi.fn()
+    const mockClose = vi.fn().mockResolvedValue(undefined)
     vi.mocked(experimental_createMCPClient).mockResolvedValue({
       tools: vi.fn().mockResolvedValue(mockGitbookTools),
       close: mockClose,
@@ -171,7 +174,7 @@ describe('chat handler — GitBook MCP integration', () => {
     )
 
     const handler = router.stack[0].route.stack[0].handle
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
     await handler(makeReq() as any, makeRes() as any, vi.fn())
 
     expect(streamText).toHaveBeenCalledWith(
@@ -206,7 +209,7 @@ describe('chat handler — GitBook MCP integration', () => {
     )
 
     const handler = router.stack[0].route.stack[0].handle
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
     await handler(makeReq() as any, makeRes() as any, vi.fn())
 
     expect(streamText).toHaveBeenCalledWith(
@@ -254,6 +257,256 @@ describe('chat handler — GitBook MCP integration', () => {
   })
 })
 
+describe('chat handler — GitBook MCP disabled', () => {
+  const mockBridgeTools = { plumber_tool: vi.fn() }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getAiBuilderFlag).mockReturnValue({
+      enabled: true,
+      config: {
+        chatPromptName: 'chat',
+        chatSummaryPromptName: 'chat-summary',
+        version: 'production',
+        disabledMcpServers: ['gitbook'],
+      },
+    })
+    vi.mocked(createMcpBridgeTools).mockReturnValue(
+      mockBridgeTools as unknown as ReturnType<typeof createMcpBridgeTools>,
+    )
+    vi.mocked(experimental_createMCPClient).mockResolvedValue({
+      tools: vi.fn().mockResolvedValue({ search_documentation: vi.fn() }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof experimental_createMCPClient>>)
+  })
+
+  it('does not call the GitBook MCP client and streams with bridge tools only', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => logger)
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger)
+
+    const handler = router.stack[0].route.stack[0].handle
+    const res = makeRes()
+    // oxlint-disable-next-line typescript/no-explicit-any
+    await handler(makeReq() as any, res as any, vi.fn())
+
+    expect(experimental_createMCPClient).not.toHaveBeenCalled()
+    expect(streamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: mockBridgeTools,
+      }),
+    )
+    expect(res.status).not.toHaveBeenCalled()
+    expect(infoSpy).toHaveBeenCalledWith(
+      'Starting AI chat stream',
+      expect.objectContaining({ disabledMcpServers: ['gitbook'] }),
+    )
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).not.toHaveBeenCalled()
+
+    infoSpy.mockRestore()
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('streams a conversation that already contains a completed GitBook dynamic-tool part', async () => {
+    const actual = await vi.importActual<typeof import('ai')>('ai')
+    vi.mocked(convertToModelMessages).mockImplementationOnce(
+      actual.convertToModelMessages,
+    )
+
+    const handler = router.stack[0].route.stack[0].handle
+    const res = makeRes()
+    await handler(
+      makeReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              {
+                type: 'text',
+                text: 'what data classification can plumber handle?',
+              },
+            ],
+          },
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'step-start' },
+              {
+                type: 'dynamic-tool',
+                toolCallId: 'tool-123',
+                toolName: 'searchDocumentation',
+                state: 'output-available',
+                input: { query: 'data classification' },
+                output: {
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'Plumber handles Restricted and Sensitive-Normal.',
+                    },
+                  ],
+                },
+              },
+              {
+                type: 'text',
+                text: 'Plumber handles Restricted and Sensitive-Normal data.',
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'thanks' }],
+          },
+        ],
+      }) as unknown as Request,
+      res as unknown as Response,
+      vi.fn(),
+    )
+
+    expect(res.status).not.toHaveBeenCalled()
+    expect(experimental_createMCPClient).not.toHaveBeenCalled()
+    expect(streamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: mockBridgeTools,
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'tool',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'tool-result',
+                toolCallId: 'tool-123',
+                toolName: 'searchDocumentation',
+              }),
+            ]),
+          }),
+        ]),
+      }),
+    )
+  })
+})
+
+describe('chat handler continuation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('retains completed tool results and drops interrupted calls on Continue', async () => {
+    const actual = await vi.importActual<typeof import('ai')>('ai')
+    vi.mocked(convertToModelMessages).mockImplementationOnce(
+      actual.convertToModelMessages,
+    )
+    const pipeId = '123e4567-e89b-12d3-a456-426614174000'
+    const handler = router.stack[0].route.stack[0].handle
+    await handler(
+      makeReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [{ type: 'text', text: 'Create a pipe' }],
+          },
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'step-start' },
+              {
+                type: 'tool-create_pipe',
+                toolCallId: 'create-1',
+                state: 'output-available',
+                input: { name: 'My pipe', steps: [] },
+                output: { pipeId },
+              },
+              {
+                type: 'tool-get_flow',
+                toolCallId: 'interrupted-1',
+                state: 'input-available',
+                input: { pipeId },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [
+              { type: 'text', text: 'Please continue from where you stopped.' },
+            ],
+          },
+        ],
+      }) as unknown as Request,
+      makeRes() as unknown as Response,
+      vi.fn(),
+    )
+
+    expect(streamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ role: 'system' }),
+          { role: 'user', content: [{ type: 'text', text: 'Create a pipe' }] },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'create-1',
+                toolName: 'create_pipe',
+                input: { name: 'My pipe', steps: [] },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'create-1',
+                toolName: 'create_pipe',
+                output: { type: 'json', value: { pipeId } },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Please continue from where you stopped.' },
+            ],
+          },
+        ],
+      }),
+    )
+  })
+
+  it('allows 20 model steps and signals tool-call pauses in finish metadata', async () => {
+    const handler = router.stack[0].route.stack[0].handle
+    await handler(
+      makeReq() as unknown as Request,
+      makeRes() as unknown as Response,
+      vi.fn(),
+    )
+
+    const [{ stopWhen }] = vi.mocked(streamText).mock.calls[0]
+    const condition = Array.isArray(stopWhen) ? stopWhen[0] : stopWhen
+    // Only the step count matters to the SDK condition.
+    const steps = Array.from({ length: 19 }, () => ({})) as Parameters<
+      NonNullable<typeof condition>
+    >[0]['steps']
+    expect(await condition?.({ steps })).toBe(false)
+    expect(await condition?.({ steps: [...steps, steps[0]] })).toBe(true)
+
+    const toUIMessageStream =
+      vi.mocked(streamText).mock.results[0].value.toUIMessageStream
+    const { messageMetadata } = toUIMessageStream.mock.calls[0][0]
+    expect(
+      messageMetadata({ part: { type: 'finish', finishReason: 'tool-calls' } }),
+    ).toEqual({
+      traceId: 'trace-123',
+      model: 'mock-model-type',
+      finishReason: 'tool-calls',
+    })
+    expect(
+      messageMetadata({ part: { type: 'text-delta', text: 'Working' } }),
+    ).not.toHaveProperty('finishReason')
+  })
+})
+
 describe('chat handler — data-columnTable emission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -265,6 +518,7 @@ describe('chat handler — data-columnTable emission', () => {
         chatPromptName: 'chat',
         chatSummaryPromptName: 'chat-summary',
         version: 'production',
+        disabledMcpServers: [],
       },
     })
   })
@@ -343,6 +597,7 @@ describe('chat handler — data-pipeState connectionLabel resolution', () => {
         chatPromptName: 'chat',
         chatSummaryPromptName: 'chat-summary',
         version: 'production',
+        disabledMcpServers: [],
       },
     })
     // Simulate a create_pipe (or similar) tool call having already set the

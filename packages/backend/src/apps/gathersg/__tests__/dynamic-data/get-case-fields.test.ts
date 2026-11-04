@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import { describe, expect, it, vi } from 'vitest'
 
 import { getTestExecutionSteps } from '@/helpers/get-test-execution-steps'
@@ -79,6 +78,70 @@ describe('getCaseFields', () => {
     const result = await getCaseFields.run($)
 
     expect(result).toEqual({ data: [] })
+    expect(httpGet).not.toHaveBeenCalled()
+  })
+
+  it('resolves a case ref before loading fields', async () => {
+    const caseUuid = '1234567890abcdefghijkl'
+    const httpPost = vi.fn().mockResolvedValue({
+      data: { total: 1, data: [{ uuid: caseUuid }] },
+    })
+    const httpGet = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { data: { type: { uuid: 'case-type-uuid' } } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            fields: [{ name: 'Text', type: 'text', optional: true }],
+          },
+        },
+      })
+
+    const $ = {
+      step: { parameters: { caseUuid: '261007-00001' } },
+      http: { get: httpGet, post: httpPost },
+    } as unknown as IGlobalVariable
+
+    const result = await getCaseFields.run($)
+
+    expect(httpPost).toHaveBeenCalledWith('/cases/search', {
+      caseRefs: ['261007-00001'],
+      page: 1,
+      size: 10,
+    })
+    expect(httpGet).toHaveBeenCalledWith('/cases/:caseUuid', {
+      urlPathParams: { caseUuid },
+    })
+    expect(result.data).toEqual([
+      { name: 'Text', value: 'Text', type: 'string' },
+    ])
+  })
+
+  it('returns an error when a case ref matches more than one case', async () => {
+    const httpPost = vi.fn().mockResolvedValue({
+      data: {
+        data: [
+          { uuid: '1234567890abcdefghijkl' },
+          { uuid: 'abcdefghijklmnopqrstuv' },
+        ],
+      },
+    })
+    const httpGet = vi.fn()
+    const $ = {
+      step: { parameters: { caseUuid: '261007-00001' } },
+      http: { get: httpGet, post: httpPost },
+    } as unknown as IGlobalVariable
+
+    const result = await getCaseFields.run($)
+
+    expect(result).toEqual({
+      data: [],
+      error: {
+        message: 'More than one case found for case ref 261007-00001',
+      },
+    })
     expect(httpGet).not.toHaveBeenCalled()
   })
 })

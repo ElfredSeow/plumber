@@ -1,10 +1,9 @@
-import { BiRightArrowAlt } from 'react-icons/bi'
 import { Flex, Icon, Text } from '@chakra-ui/react'
 import { Button } from '@opengovsg/design-system-react'
+import { BiRightArrowAlt } from 'react-icons/bi'
 
 import { useCreateFlowContext } from '../contexts/CreateFlowContext'
 import { useFlowCreation } from '../hooks/useFlowCreation'
-
 import FlowNameInput from './FlowNameInput'
 import ModeSelector from './ModeSelector'
 
@@ -24,11 +23,11 @@ export default function EmptyFlows() {
     <Flex
       maxW="800px"
       margin="auto"
-      rowGap={4}
+      rowGap={6}
       flexDir="column"
       pt={{ base: '0', md: '10vh' }}
     >
-      <Flex maxW="800px">
+      <Flex maxW="800px" mb={2}>
         <Text textStyle="h3">How do you want to create your workflow?</Text>
       </Flex>
 
@@ -42,6 +41,7 @@ export default function EmptyFlows() {
             handleInputChange={handleInputChange}
           />
           <Button
+            alignSelf="flex-end"
             onClick={() => handleModeSubmit()}
             isDisabled={isButtonDisabled}
             isLoading={loading}

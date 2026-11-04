@@ -1,13 +1,16 @@
+import { Box, Flex, Link, Text } from '@chakra-ui/react'
 import { useCallback, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Box, Flex, Link, Text } from '@chakra-ui/react'
 import { StickToBottom } from 'use-stick-to-bottom'
 
 import * as URLS from '@/config/urls'
 import { Message } from '@/hooks/useChatStream'
 import { useAiBuilderContext } from '@/pages/AiBuilder/AiBuilderContext'
 import ChatMessages from '@/pages/AiBuilder/components/ChatMessages'
-import { PLACEHOLDER_MESSAGE } from '@/pages/AiBuilder/constants'
+import {
+  CONTINUE_PROMPT,
+  PLACEHOLDER_MESSAGE,
+} from '@/pages/AiBuilder/constants'
 import { buildSupportFormUrl } from '@/pages/AiBuilder/helpers'
 import { createNewChatDraft } from '@/pages/AiBuilder/new-chat'
 
@@ -15,6 +18,7 @@ import MessageLimitBanner from './MessageLimitBanner'
 import PromptInput from './PromptInput'
 import ScrollButton from './ScrollButton'
 import SideDrawer from './SideDrawer'
+import StepLimitBanner from './StepLimitBanner'
 
 interface ChatInterfaceProps {
   messages: Message[]
@@ -26,6 +30,9 @@ interface ChatInterfaceProps {
   cancelStream: () => void
   resetChat: () => void
   hasReachedLimit: boolean
+  /** Set when the final turn before the message limit was stopped and can be resent. */
+  onRetryLastTurn?: () => void
+  hasHitStepLimit: boolean
   onAddConnection?: (context: { question: string; appKey: string }) => void
   knownFormUrl?: string
   onConnectForm?: () => void
@@ -46,6 +53,8 @@ export default function ChatInterface(props: ChatInterfaceProps) {
     cancelStream,
     resetChat,
     hasReachedLimit,
+    onRetryLastTurn,
+    hasHitStepLimit,
     onAddConnection,
     knownFormUrl,
     onConnectForm,
@@ -214,8 +223,16 @@ export default function ChatInterface(props: ChatInterfaceProps) {
               flexDirection="column"
             >
               <ScrollButton />
+              {hasHitStepLimit && !hasReachedLimit && (
+                <StepLimitBanner
+                  onContinue={() => sendMessage(CONTINUE_PROMPT)}
+                />
+              )}
               {hasReachedLimit ? (
-                <MessageLimitBanner onNewChat={handleNewChat} />
+                <MessageLimitBanner
+                  onNewChat={handleNewChat}
+                  onRetry={onRetryLastTurn}
+                />
               ) : (
                 <PromptInput
                   sendMessage={sendMessage}

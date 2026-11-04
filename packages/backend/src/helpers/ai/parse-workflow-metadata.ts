@@ -1,5 +1,4 @@
 import { IFlowSteps } from '@plumber/types'
-
 import { parse as parseYaml } from 'yaml'
 import z from 'zod'
 import { fromZodError } from 'zod-validation-error'
@@ -51,6 +50,58 @@ function formatWorkflowError(
   return fromZodError(error).message
 }
 
+function isIfThenMetadataStep(step: any): boolean {
+  return (
+    step?.appKey === TOOLBOX_APP_KEY && step?.key === TOOLBOX_ACTIONS.IF_THEN
+  )
+}
+
+/**
+ * Flattens the `steps` nested under an if-then, recording the block's extent
+ * as `ifThenChildCount`. A nested if-then is kept so the schema rules reject
+ * it and name the offending step.
+ */
+export function flattenWorkflowMetadataSteps(rawSteps: any[]): any[] {
+  const flattened: any[] = []
+  for (const rawStep of rawSteps) {
+    if (!rawStep || typeof rawStep !== 'object') {
+      flattened.push(rawStep)
+      continue
+    }
+    const { steps: nestedSteps, ...step } = rawStep
+    // IMPORTANT: Only an absent `steps` falls back to the legacy flat block.
+    // A malformed one would silently move the If block boundary.
+    if (isIfThenMetadataStep(step) && 'steps' in rawStep) {
+      if (nestedSteps !== null && !Array.isArray(nestedSteps)) {
+        throw new BadUserInputError('An If block must list its steps.')
+      }
+      if (!nestedSteps?.length) {
+        throw new BadUserInputError(
+          'An If block must contain at least one step.',
+        )
+      }
+    }
+    if (!isIfThenMetadataStep(step) || !Array.isArray(nestedSteps)) {
+      flattened.push(step)
+      continue
+    }
+    // create_pipe puts every step in an If block on the block's own path.
+    const children = flattenWorkflowMetadataSteps(nestedSteps).map(
+      ({ approvalBranch: _, ...child }) =>
+        step.approvalBranch !== undefined
+          ? { ...child, approvalBranch: step.approvalBranch }
+          : child,
+    )
+    flattened.push(
+      children.length > 0
+        ? { ...step, ifThenChildCount: children.length }
+        : step,
+      ...children,
+    )
+  }
+  return flattened
+}
+
 function parseRawWorkflowData(text: string): IFlowSteps {
   const match = text.match(WORKFLOW_METADATA_REGEX)
   if (!match) {
@@ -72,7 +123,13 @@ function parseRawWorkflowData(text: string): IFlowSteps {
     throw new BadUserInputError('Unable to generate the workflow.')
   }
 
-  const [firstStep, ...remainingSteps] = parsed.steps
+  const [firstStep, ...remainingSteps] = flattenWorkflowMetadataSteps(
+    parsed.steps,
+  )
+
+  const hasMrfStage = remainingSteps.some(
+    (step: any) => step?.appKey === 'formsg' && step?.key === 'mrfSubmission',
+  )
 
   return {
     name: String(parsed.name ?? 'Build with AI').slice(0, 64),
@@ -81,10 +138,14 @@ function parseRawWorkflowData(text: string): IFlowSteps {
       appKey: firstStep.appKey,
       key: firstStep.key,
       description: String(firstStep.description ?? ''),
+      // Other triggers keep the app's own name in the preview.
+      ...(hasMrfStage &&
+        firstStep.stepName && {
+          config: { stepName: String(firstStep.stepName).slice(0, 64) },
+        }),
     },
     actions: remainingSteps.map((step: any) => {
-      const isIfThen =
-        step.appKey === TOOLBOX_APP_KEY && step.key === TOOLBOX_ACTIONS.IF_THEN
+      const isIfThen = isIfThenMetadataStep(step)
 
       return {
         type: 'action' as const,
@@ -102,6 +163,13 @@ function parseRawWorkflowData(text: string): IFlowSteps {
             depth: 0,
             branchName: String(step.branchName ?? 'Branch'),
           },
+          ...(step.ifThenChildCount !== undefined && {
+            ifThenChildCount: step.ifThenChildCount,
+          }),
+        }),
+        ...(step.isApproval !== undefined && { isApproval: step.isApproval }),
+        ...(step.approvalBranch !== undefined && {
+          approvalBranch: step.approvalBranch,
         }),
       }
     }),
@@ -116,7 +184,9 @@ function parseWorkflowMetadata(
 
   const schema = z.object({
     trigger: getTriggerSchema(restrictedAppKeys),
-    actions: getActionsSchema(restrictedAppKeys),
+    // A proposal may show an MRF form's stage steps. It only previews them.
+    // create_pipe still rejects hidden steps.
+    actions: getActionsSchema(restrictedAppKeys, { includeHidden: true }),
     name: z.string().max(64).default('Build with AI'),
   })
 

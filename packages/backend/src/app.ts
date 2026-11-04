@@ -1,11 +1,9 @@
 import '@/config/orm'
 import '@/config/dynamodb'
-
 import { IRequest } from '@plumber/types'
-
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
-import express from 'express'
+import express, { Express } from 'express'
 import createError from 'http-errors'
 
 import appConfig from '@/config/app'
@@ -25,7 +23,7 @@ import router from '@/routes'
 
 createBullBoardHandler(serverAdapter)
 
-const app = express()
+const app: Express = express()
 
 app.disable('x-powered-by')
 app.use(csp)
@@ -34,8 +32,7 @@ app.use(cookieParser())
 app.use(
   express.json({
     verify(req, _res, buf) {
-      // eslint-disable-next-line prettier/prettier
-      (req as IRequest).rawBody = buf
+      ;(req as IRequest).rawBody = buf
     },
     limit: appConfig.requestBodySizeLimit,
   }),
@@ -45,8 +42,7 @@ app.use(
     extended: false,
     limit: appConfig.requestBodySizeLimit,
     verify(req, _res, buf) {
-      // eslint-disable-next-line prettier/prettier
-      (req as IRequest).rawBody = buf
+      ;(req as IRequest).rawBody = buf
     },
   }),
 )

@@ -1,3 +1,4 @@
+import { Box, Flex, Icon, Image, Text, Textarea } from '@chakra-ui/react'
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -8,7 +9,6 @@ import {
 } from 'react'
 import { FaArrowCircleUp } from 'react-icons/fa'
 import { FaCircleStop } from 'react-icons/fa6'
-import { Box, Flex, Icon, Image, Text, Textarea } from '@chakra-ui/react'
 
 import {
   type ClarificationQuestion,
@@ -183,7 +183,7 @@ export default function PromptInput({
     if (initialValue) {
       handleResize()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [])
 
   // The resize handler above only fires on typed input, but a long
@@ -359,7 +359,7 @@ export default function PromptInput({
         border="1px"
         borderColor="gray.200"
         borderRadius="16px"
-        boxShadow="0 2px 4px rgba(0, 0, 0, 0.1)"
+        boxShadow="0 1px 2px rgba(31, 41, 55, 0.04), 0 4px 16px rgba(31, 41, 55, 0.08)"
         p={2}
         w="full"
         minH={showIdeas ? '120px' : '50px'}

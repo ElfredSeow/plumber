@@ -1,10 +1,10 @@
-import { FormEvent } from 'react'
 import {
   Modal,
   ModalCloseButton,
   ModalContent,
   ModalOverlay,
 } from '@chakra-ui/react'
+import { FormEvent } from 'react'
 
 import { FLOW_CREATE_MODE } from '@/pages/Flows/contexts/CreateFlowContext'
 import { useFlowCreation } from '@/pages/Flows/hooks/useFlowCreation'
@@ -43,6 +43,7 @@ export default function CreateFlowModal(props: CreateFlowModalProps) {
       motionPreset="none"
       closeOnEsc={false}
       isCentered
+      size="4xl"
     >
       <ModalOverlay bg="base.canvas.overlay" />
       <ModalContent>
@@ -55,7 +56,7 @@ export default function CreateFlowModal(props: CreateFlowModalProps) {
           handleSubmit={handleSubmit}
           onModeSelect={handleModeSelect}
         />
-        <ModalCloseButton mt={3} />
+        <ModalCloseButton top="1.625rem" right={4} />
       </ModalContent>
     </Modal>
   )

@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import app from '../..'
@@ -37,10 +36,11 @@ describe('send payment email', () => {
       } as unknown as IGlobalVariable['http'],
       setActionItem: vi.fn(),
       app,
-    }
+    } as unknown as IGlobalVariable
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

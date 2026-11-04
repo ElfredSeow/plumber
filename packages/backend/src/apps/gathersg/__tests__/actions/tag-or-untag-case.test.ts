@@ -1,11 +1,8 @@
 import type { IGlobalVariable } from '@plumber/types'
-
-import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import HttpError from '@/errors/http'
-
 import app from '../../..'
+import { makeHttpError } from '../../../../../test/utils/make-http-error'
 import tagOrUntagCaseAction from '../../actions/tag-or-untag-case'
 
 const MOCK_RESPONSE = {
@@ -16,15 +13,18 @@ const MOCK_CASE_UUID = 'abcdefghijkl1234567890' // have to be 22 characters long
 const MOCK_TAG_VALUE = 'urgent'
 
 const mocks = vi.hoisted(() => ({
-  httpPost: vi.fn(() => ({
-    data: MOCK_RESPONSE,
-  })),
+  httpPost: vi.fn(),
 }))
 
 describe('tag or untag case', () => {
   let $: IGlobalVariable
 
   beforeEach(() => {
+    mocks.httpPost.mockReset()
+    mocks.httpPost.mockImplementation(() => ({
+      data: MOCK_RESPONSE,
+    }))
+
     $ = {
       auth: {
         set: vi.fn(),
@@ -54,6 +54,7 @@ describe('tag or untag case', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -96,7 +97,7 @@ describe('tag or untag case', () => {
 
   it('parses the raw response correctly', async () => {
     await tagOrUntagCaseAction.run($)
-    expect($.setActionItem).toBeCalledWith({
+    expect($.setActionItem).toHaveBeenCalledWith({
       raw: {
         traceId: MOCK_RESPONSE.traceId,
       },
@@ -106,15 +107,74 @@ describe('tag or untag case', () => {
   it('should throw step error for invalid regex case uuid', async () => {
     $.step.parameters.caseUuid = 'invalid-uuid-with-dashes'
     await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
-      'Please enter a valid case uuid',
+      'Please enter a valid case uuid or case ref',
     )
   })
 
   it('should throw step error for empty case uuid', async () => {
     $.step.parameters.caseUuid = ''
     await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
-      'Please do not leave the case uuid empty',
+      'Please do not leave the case uuid or case ref empty',
     )
+  })
+
+  it('skips search when the value is a case uuid', async () => {
+    mocks.httpPost.mockClear()
+    await tagOrUntagCaseAction.run($)
+
+    expect(mocks.httpPost).toHaveBeenCalledTimes(1)
+    expect(mocks.httpPost).toHaveBeenCalledWith(
+      '/cases/:caseUuid/tag',
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+
+  it('searches by case ref and tags that case uuid', async () => {
+    mocks.httpPost.mockReset()
+    mocks.httpPost
+      .mockResolvedValueOnce({
+        data: { total: 1, data: [{ uuid: MOCK_CASE_UUID }] },
+      })
+      .mockResolvedValueOnce({ data: MOCK_RESPONSE })
+    $.step.parameters.caseUuid = '261007-00001'
+
+    await tagOrUntagCaseAction.run($)
+
+    expect(mocks.httpPost).toHaveBeenNthCalledWith(1, '/cases/search', {
+      caseRefs: ['261007-00001'],
+      page: 1,
+      size: 10,
+    })
+    expect(mocks.httpPost).toHaveBeenNthCalledWith(
+      2,
+      '/cases/:caseUuid/tag',
+      {
+        caseUuid: MOCK_CASE_UUID,
+        tagOrUntag: true,
+        tag: MOCK_TAG_VALUE,
+      },
+      {
+        urlPathParams: {
+          caseUuid: MOCK_CASE_UUID,
+        },
+      },
+    )
+  })
+
+  it('throws when a case ref matches more than one case', async () => {
+    mocks.httpPost.mockReset()
+    mocks.httpPost.mockResolvedValueOnce({
+      data: {
+        data: [{ uuid: MOCK_CASE_UUID }, { uuid: '1234567890abcdefghijkl' }],
+      },
+    })
+    $.step.parameters.caseUuid = '261007-00001'
+
+    await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
+      'More than one case found for case ref 261007-00001',
+    )
+    expect(mocks.httpPost).toHaveBeenCalledTimes(1)
   })
 
   it('should throw step error for empty tag value', async () => {
@@ -127,69 +187,60 @@ describe('tag or untag case', () => {
   it('should throw step error for invalid parameters (whitespace only case uuid)', async () => {
     $.step.parameters.caseUuid = '   '
     await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
-      'Please do not leave the case uuid empty',
+      'Please do not leave the case uuid or case ref empty',
     )
   })
 
   it('should throw step error for invalid parameters (whitespace only tag value)', async () => {
     $.step.parameters.tagValue = '   '
-    await expect(tagOrUntagCaseAction.run($)).rejects.toThrowError()
+    await expect(tagOrUntagCaseAction.run($)).rejects.toThrow()
   })
 
   it('should throw step error for case not found', async () => {
-    const error = {
-      response: {
-        data: {
-          error: {
-            code: 'RESOURCE_NOT_FOUND',
-            message: 'Case not found',
-          },
+    const httpError = makeHttpError({
+      data: {
+        error: {
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Case not found',
         },
-        status: 404,
-        statusText: 'Not Found',
       },
-    } as AxiosError
-    const httpError = new HttpError(error)
+      status: 404,
+      statusText: 'Not Found',
+    })
     mocks.httpPost.mockRejectedValueOnce(httpError)
 
-    await expect(tagOrUntagCaseAction.run($)).rejects.toThrowError()
+    await expect(tagOrUntagCaseAction.run($)).rejects.toThrow()
   })
 
   it('should throw step error for invalid tag value', async () => {
-    const error = {
-      response: {
-        data: {
-          error: {
-            code: 'INVALID_INPUT',
-            message: 'Invalid tag value',
-          },
+    const httpError = makeHttpError({
+      data: {
+        error: {
+          code: 'INVALID_INPUT',
+          message: 'Invalid tag value',
         },
-        status: 400,
-        statusText: 'Bad Request',
       },
-    } as AxiosError
-    const httpError = new HttpError(error)
+      status: 400,
+      statusText: 'Bad Request',
+    })
     mocks.httpPost.mockRejectedValueOnce(httpError)
 
-    await expect(tagOrUntagCaseAction.run($)).rejects.toThrowError(
+    await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
       'Please check that you have configured your step correctly',
     )
   })
 
   it('should throw step error for server error', async () => {
-    const error = {
-      response: {
-        data: {
-          message: 'Internal server error',
-        },
-        status: 500,
-        statusText: 'Internal Server Error',
+    const httpError = makeHttpError({
+      data: {
+        message: 'Internal server error',
       },
-    } as AxiosError
-    const httpError = new HttpError(error)
+      status: 500,
+      statusText: 'Internal Server Error',
+    })
     mocks.httpPost.mockRejectedValueOnce(httpError)
 
-    await expect(tagOrUntagCaseAction.run($)).rejects.toThrowError(
+    await expect(tagOrUntagCaseAction.run($)).rejects.toThrow(
       'Please check that you have configured your step correctly',
     )
   })
@@ -212,5 +263,61 @@ describe('tag or untag case', () => {
         },
       },
     )
+  })
+
+  describe('error kinds', () => {
+    it.each([
+      ['empty tag value', { tagValue: '' }],
+      ['malformed case identifier', { caseUuid: 'invalid-uuid-with-dashes' }],
+    ])('tags a %s as config', async (_label, parameters) => {
+      Object.assign($.step.parameters, parameters)
+
+      await expect(tagOrUntagCaseAction.run($)).rejects.toMatchObject({
+        kind: 'config',
+      })
+      expect(mocks.httpPost).not.toHaveBeenCalled()
+    })
+
+    it('tags a response without traceId as third-party', async () => {
+      mocks.httpPost.mockResolvedValueOnce({ data: {} })
+
+      await expect(tagOrUntagCaseAction.run($)).rejects.toMatchObject({
+        kind: 'third-party',
+      })
+    })
+
+    it('tags a 404 RESOURCE_NOT_FOUND as config', async () => {
+      mocks.httpPost.mockRejectedValueOnce(
+        makeHttpError({
+          status: 404,
+          data: {
+            error: { code: 'RESOURCE_NOT_FOUND', message: 'Case not found' },
+          },
+        }),
+      )
+
+      await expect(tagOrUntagCaseAction.run($)).rejects.toMatchObject({
+        kind: 'config',
+      })
+    })
+
+    it('tags a 500 as third-party', async () => {
+      mocks.httpPost.mockRejectedValueOnce(
+        makeHttpError({ status: 500, data: { message: 'Server error' } }),
+      )
+
+      await expect(tagOrUntagCaseAction.run($)).rejects.toMatchObject({
+        kind: 'third-party',
+      })
+    })
+
+    it('tags an unexpected error as internal', async () => {
+      mocks.httpPost.mockRejectedValueOnce(new Error('boom'))
+
+      await expect(tagOrUntagCaseAction.run($)).rejects.toMatchObject({
+        kind: 'internal',
+        message: expect.stringContaining("An error occurred: 'boom'"),
+      })
+    })
   })
 })

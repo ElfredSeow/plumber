@@ -1,5 +1,4 @@
 import { IGlobalVariable } from '@plumber/types'
-
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import StepError from '@/errors/step'
@@ -75,13 +74,13 @@ describe.each([['ddb'], ['pg']])(
 
     it('should allow owners to create row', async () => {
       await expect(createRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should allow editors to create row', async () => {
       $.user = editor
       await expect(createRowAction.run($)).resolves.toBeUndefined()
-      expect($.setActionItem).toBeCalled()
+      expect($.setActionItem).toHaveBeenCalled()
     })
 
     it('should not allow viewers to create row', async () => {

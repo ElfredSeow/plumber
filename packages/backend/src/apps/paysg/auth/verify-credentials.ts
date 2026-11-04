@@ -1,7 +1,8 @@
 import type { IGlobalVariable } from '@plumber/types'
 
-import { getEnvironmentFromApiKey, PaySgEnvironment } from '../common/api'
+import HttpError from '@/errors/http'
 
+import { getEnvironmentFromApiKey, PaySgEnvironment } from '../common/api'
 import { validateAuthData } from './auth-data'
 
 export default async function verifyCredentials(
@@ -19,7 +20,10 @@ export default async function verifyCredentials(
       },
     )
   } catch (e) {
-    if (e.response?.status === 401 || e.response?.status === 403) {
+    if (
+      e instanceof HttpError &&
+      (e.response.status === 401 || e.response.status === 403)
+    ) {
       throw new Error('Invalid credentials')
     }
     throw new Error('Unable to validate payment service id and api key')

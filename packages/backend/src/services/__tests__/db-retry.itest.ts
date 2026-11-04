@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { retryOnTransientDbError } from '@/helpers/retry-on-transient-db-error'
@@ -7,29 +8,12 @@ import ExecutionStep from '@/models/execution-step'
 import Flow from '@/models/flow'
 import Step from '@/models/step'
 import User from '@/models/user'
+import * as shouldTriggerProceedModule from '@/services/helpers/should-trigger-proceed'
+import { spyOnLogger } from '@/test/spy-on-logger'
 
 import { processTrigger } from '../trigger'
 
-const mocks = vi.hoisted(() => ({
-  shouldTriggerProceed: vi.fn(),
-  loggerWarn: vi.fn(),
-  loggerError: vi.fn(),
-  loggerInfo: vi.fn(),
-}))
-
-vi.mock('@/services/helpers/should-trigger-proceed', () => ({
-  shouldTriggerProceed: mocks.shouldTriggerProceed,
-}))
-
-// The retry helper logs via logger.warn / logger.error; stub it so those calls
-// don't depend on the real (Datadog) logger during the test.
-vi.mock('@/helpers/logger', () => ({
-  default: {
-    warn: mocks.loggerWarn,
-    error: mocks.loggerError,
-    info: mocks.loggerInfo,
-  },
-}))
+const shouldTriggerProceed = vi.fn()
 
 // Simulates a Postgres failover / connection-drop error that the retry helper
 // classifies as transient (SQLSTATE 57P01 = admin_shutdown).
@@ -47,6 +31,12 @@ describe('transient DB retry idempotency (real DB)', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+
+    vi.spyOn(
+      shouldTriggerProceedModule,
+      'shouldTriggerProceed',
+    ).mockImplementation(shouldTriggerProceed as never)
+    spyOnLogger()
 
     const user = await User.query().findOne({ email: 'tester@open.gov.sg' })
     flow = await Flow.query().insertGraphAndFetch({
@@ -66,12 +56,13 @@ describe('transient DB retry idempotency (real DB)', () => {
   })
 
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
   describe('processTrigger', () => {
     it('creates exactly one execution + execution step when the insert transaction is retried after a transient error', async () => {
-      mocks.shouldTriggerProceed.mockResolvedValue({ shouldExecute: true })
+      shouldTriggerProceed.mockResolvedValue({ shouldExecute: true })
 
       // Force the first committed transaction to surface a transient error (as
       // if the connection dropped after COMMIT), then succeed on the retry. The
@@ -167,7 +158,7 @@ describe('transient DB retry idempotency (real DB)', () => {
           }
           return row
         },
-        { initialDelayMs: 1, maxDelayMs: 5 },
+        { initialDelayMs: 1 },
       )
 
       expect(attempts).toBe(2)

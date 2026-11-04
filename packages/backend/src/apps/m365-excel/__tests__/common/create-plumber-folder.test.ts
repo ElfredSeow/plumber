@@ -1,10 +1,9 @@
 import { IGlobalVariable } from '@plumber/types'
-
-import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import HttpError from '@/errors/http'
 
+import { makeHttpError } from '../../../../../test/utils/make-http-error'
 import { createPlumberFolder } from '../../common/create-plumber-folder'
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +40,18 @@ describe('Create plumber folder', () => {
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    mocks.httpPost.mockReset()
+    mocks.httpGet.mockReset()
+    mocks.getM365TenantInfo.mockReset()
+    mocks.getM365TenantInfo.mockImplementation(() => ({
+      label: 'test-tenant',
+      id: 'test-tenant-id',
+      sharePointSiteId: 'test-sharepoint-site-id',
+      clientId: 'abcd',
+      clientThumbprint: 'abcd',
+      clientPrivateKey: 'abcd',
+      allowedSensitivityLabelGuids: new Set(),
+    }))
   })
 
   it('calls the appropriate Graph API endpoints to create a folder and grants user access', async () => {
@@ -92,7 +102,7 @@ describe('Create plumber folder', () => {
 
   it("errors out if user's email is not set", async () => {
     $.user.email = null
-    await expect(createPlumberFolder('local-dev', $)).rejects.toThrowError(
+    await expect(createPlumberFolder('local-dev', $)).rejects.toThrow(
       'User email unavailable',
     )
   })
@@ -101,16 +111,14 @@ describe('Create plumber folder', () => {
     mocks.httpPost
       // First call to error out with "folder already exists"
       .mockRejectedValueOnce(
-        new HttpError({
-          response: {
-            data: {
-              error: {
-                code: 'nameAlreadyExists',
-                message: '',
-              },
+        makeHttpError({
+          data: {
+            error: {
+              code: 'nameAlreadyExists',
+              message: '',
             },
           },
-        } as unknown as AxiosError),
+        }),
       )
       // 2nd call to grant access; no return value is needed but we mock to
       // prevent outgoing call.
@@ -151,15 +159,13 @@ describe('Create plumber folder', () => {
     mocks.httpPost
       // First call to error out some random error message
       .mockRejectedValueOnce(
-        new HttpError({
-          response: {
-            data: {
-              error: {
-                code: 'transientFailure',
-              },
+        makeHttpError({
+          data: {
+            error: {
+              code: 'transientFailure',
             },
           },
-        } as unknown as AxiosError),
+        }),
       )
       // 2nd call to grant access; no return value is needed but we mock to
       // prevent outgoing call.
@@ -185,7 +191,7 @@ describe('Create plumber folder', () => {
         data: { id: null },
       }))
 
-    await expect(createPlumberFolder('local-dev', $)).rejects.toThrowError(
+    await expect(createPlumberFolder('local-dev', $)).rejects.toThrow(
       /a problem creating your folder/,
     )
   })
@@ -194,16 +200,14 @@ describe('Create plumber folder', () => {
     mocks.httpPost
       // Mock create folder API to error out with "folder already exists"
       .mockRejectedValueOnce(
-        new HttpError({
-          response: {
-            data: {
-              error: {
-                code: 'nameAlreadyExists',
-                message: '',
-              },
+        makeHttpError({
+          data: {
+            error: {
+              code: 'nameAlreadyExists',
+              message: '',
             },
           },
-        } as unknown as AxiosError),
+        }),
       )
     mocks.httpGet
       // Mock get folder API to return null ID
@@ -213,7 +217,7 @@ describe('Create plumber folder', () => {
         },
       })
 
-    await expect(createPlumberFolder('local-dev', $)).rejects.toThrowError(
+    await expect(createPlumberFolder('local-dev', $)).rejects.toThrow(
       /a problem creating your folder/,
     )
   })

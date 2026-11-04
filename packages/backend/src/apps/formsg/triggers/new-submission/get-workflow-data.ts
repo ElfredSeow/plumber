@@ -1,6 +1,7 @@
 import { IGlobalVariable } from '@/../../types'
 import StepError from '@/errors/step'
 
+import { getMrfStepName } from '../../common/get-mrf-step-name'
 import {
   type FormSchema,
   mrfWorkflowDataSchema,
@@ -12,7 +13,15 @@ export function parseWorkflowData(
   $: IGlobalVariable,
   formSchema: FormSchema,
 ): ParsedMrfWorkflow | null {
-  const result = mrfWorkflowDataSchema.safeParse(formSchema.form.workflow)
+  return parseMrfWorkflow(formSchema.form.workflow)
+}
+
+/**
+ * Parses a form's raw workflow without needing a connection, so MRF steps
+ * can be created before the trigger is ever tested.
+ */
+export function parseMrfWorkflow(workflow: unknown): ParsedMrfWorkflow {
+  const result = mrfWorkflowDataSchema.safeParse(workflow)
   if (!result.success) {
     throw new StepError(
       'Invalid MRF data',
@@ -26,9 +35,7 @@ export function parseWorkflowData(
   for (const step of result.data) {
     populatedFields.push(...step.edit)
     parsedSteps.push({
-      defaultStepName: step.step_name
-        ? step.step_name.trim()
-        : `MRF Step ${parsedSteps.length + 1}`,
+      defaultStepName: getMrfStepName(step.step_name, parsedSteps.length),
       type: step.workflow_type,
       fields: [...populatedFields],
       formWorkflowStepId: step._id,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BadUserInputError } from '@/errors/graphql-errors'
@@ -134,9 +135,7 @@ describe('upsert flow collaborator', () => {
         },
         context,
       ),
-    ).rejects.toThrowError(
-      'You do not have sufficient permissions for this pipe',
-    )
+    ).rejects.toThrow('You do not have sufficient permissions for this pipe')
   })
 
   describe('automatic connection sharing', () => {

@@ -1,5 +1,3 @@
-import type { IExecution, IExecutionStep } from '@plumber/types'
-
 import {
   Box,
   Card,
@@ -11,6 +9,7 @@ import {
   Text,
 } from '@chakra-ui/react'
 import { Tab, Tabs } from '@opengovsg/design-system-react'
+import type { IExecution, IExecutionStep } from '@plumber/types'
 
 import ErrorResult from '@/components/ErrorResult'
 import JSONViewer from '@/components/JSONViewer'
@@ -53,7 +52,7 @@ export default function ExecutionStep({
     canRetry,
     customRetryButtonText,
   } = useExecutionStepStatus({
-    appKey,
+    appKey: appKey ?? '',
     status,
     errorDetails,
     execution,
@@ -142,11 +141,11 @@ export default function ExecutionStep({
                   <DelayPausedAlert execution={execution} />
                 </TabPanel>
               )}
-              {showErrorTab && (
+              {showErrorTab && errorDetails && (
                 <TabPanel>
                   <ErrorResult
                     executionStepId={executionStep.id}
-                    errorDetails={executionStep.errorDetails}
+                    errorDetails={errorDetails}
                     isTestRun={false}
                   />
                 </TabPanel>

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BadUserInputError, ForbiddenError } from '@/errors/graphql-errors'
@@ -308,7 +309,7 @@ describe.each([['ddb'], ['pg']])(
             },
             context,
           ),
-        ).rejects.toThrowError()
+        ).rejects.toThrow()
       })
 
       it('should throw an error if trying to delete a column from a different table', async () => {

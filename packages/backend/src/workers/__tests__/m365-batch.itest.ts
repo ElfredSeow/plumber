@@ -103,9 +103,8 @@ vi.mock('@/apps/m365-excel/common/auth-data', () => ({
   }),
 }))
 
-// scope/wrap are plain functions (not vi.fn) so vi.restoreAllMocks() in
-// afterEach - which we use to clean per-test spies - cannot wipe them and
-// break tracing in the next test.
+// scope/wrap are plain functions (not vi.fn) so the mock reset and restore in
+// afterEach cannot wipe them and break tracing in the next test.
 vi.mock('@/helpers/tracer', () => ({
   default: {
     scope: () => ({ active: () => ({ addTags: mocks.addSpanTags }) }),
@@ -139,6 +138,7 @@ const batchWorker = appActionBatchWorkers['m365-excel']
 const batchQueue = actionBatchQueues['m365-excel']
 
 let userId: string
+let trackedExecutionIds: string[] = []
 
 //
 // Graph stubs
@@ -266,6 +266,7 @@ async function buildCreateRowFlow(options: {
     flowId: flow.id,
     testRun: false,
   })
+  trackedExecutionIds.push(execution.id)
 
   return {
     flow,
@@ -305,7 +306,12 @@ async function enqueueCreateRowJob(options: {
 async function createTableRowSteps(
   status?: 'success' | 'failure',
 ): Promise<ExecutionStep[]> {
-  const query = ExecutionStep.query().where('key', 'createTableRow')
+  if (trackedExecutionIds.length === 0) {
+    return []
+  }
+  const query = ExecutionStep.query()
+    .where('key', 'createTableRow')
+    .whereIn('execution_id', trackedExecutionIds)
   if (status) {
     query.where('status', status)
   }
@@ -355,7 +361,10 @@ describe('m365-excel batch worker (integration)', () => {
   })
 
   beforeEach(async () => {
+    trackedExecutionIds = []
+    mocks.request.mockReset()
     mocks.acquire.mockResolvedValue({ request: mocks.request })
+    mocks.getLdFlagValue.mockImplementation(async () => 'all')
     // Lock disabled by default; the per-file lock tests opt in per test.
     mocks.getLockKey.mockResolvedValue(null)
     // File access granted by default; the partial-failure tests reject one job.
@@ -375,6 +384,8 @@ describe('m365-excel batch worker (integration)', () => {
     await flushQueue(mainActionQueue, mainActionWorker)
     restoreWorker(batchWorker, originalBatchState)
     restoreWorker(mainActionWorker, originalMainState)
+    // Vitest 4 restoreAllMocks no longer clears factory mock call history.
+    vi.resetAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -662,11 +673,22 @@ describe('m365-excel batch worker (integration)', () => {
         .where('app_key', 'toolbox')
         .where('key', 'forEach')
         .first()
+      if (!forEachStep) {
+        throw new Error(`forEach step not found for execution ${executionId}`)
+      }
       return (
-        forEachStep?.metadata as {
+        forEachStep.metadata as {
           iterationStatus: Record<string, string | null>
         }
       ).iterationStatus
+    }
+
+    async function allIterationsAre(
+      executionId: string,
+      status: 'success' | 'failure',
+    ): Promise<boolean> {
+      const iterationStatus = await getForEachIterationStatus(executionId)
+      return Object.values(iterationStatus).every((s) => s === status)
     }
 
     it('resolves the execution to success exactly once when all iterations succeed', async () => {
@@ -686,7 +708,10 @@ describe('m365-excel batch worker (integration)', () => {
         const execution = await Execution.query().findById(flow.execution.id)
         return execution.status === 'success'
       })
-      await sleep(200)
+      await waitFor(
+        async () =>
+          (await createTableRowSteps('success')).length === ITERATIONS,
+      )
 
       // One batch -> one POST with all iteration rows.
       const posts = postConfigs()
@@ -729,7 +754,12 @@ describe('m365-excel batch worker (integration)', () => {
         const execution = await Execution.query().findById(flow.execution.id)
         return execution.status === 'failure'
       })
-      await sleep(200)
+      // The execution can fail before every iteration is recorded and patched.
+      await waitFor(
+        async () =>
+          (await createTableRowSteps('failure')).length === ITERATIONS &&
+          (await allIterationsAre(flow.execution.id, 'failure')),
+      )
 
       // Every iteration slot was patched to 'failure' (else the for-each hangs).
       const iterationStatus = await getForEachIterationStatus(flow.execution.id)
@@ -768,7 +798,13 @@ describe('m365-excel batch worker (integration)', () => {
         const execution = await Execution.query().findById(flow.execution.id)
         return execution.status === 'failure'
       })
-      await sleep(200)
+      // The execution fails on the first iteration, before the rest are isolated.
+      await waitFor(
+        async () =>
+          (await createTableRowSteps('failure')).length === ITERATIONS &&
+          (await allIterationsAre(flow.execution.id, 'failure')) &&
+          (await batchQueue.getFailed()).length === ITERATIONS,
+      )
 
       // No POST: runBatch returns before acquiring the session when the shared
       // access check is denied.

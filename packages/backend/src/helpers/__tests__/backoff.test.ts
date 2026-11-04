@@ -1,5 +1,4 @@
 import type { IActionJobData } from '@plumber/types'
-
 import { type JobPro } from '@taskforcesh/bullmq-pro'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -20,6 +19,7 @@ vi.mock('@/helpers/logger', () => ({
 
 describe('Backoff', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 

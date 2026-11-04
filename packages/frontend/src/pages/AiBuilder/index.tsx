@@ -1,27 +1,28 @@
+import { Box, Container, Flex, HStack, Icon, Text } from '@chakra-ui/react'
+import { Tag, TagLabel, TagLeftIcon } from '@opengovsg/design-system-react'
 import type { IApp, IJSONObject } from '@plumber/types'
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Helmet } from 'react-helmet'
-import { BiInfoCircle } from 'react-icons/bi'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { CloseButton, Container, Flex, HStack, Text } from '@chakra-ui/react'
-import { Tag, TagLabel, TagLeftIcon } from '@opengovsg/design-system-react'
+import { BiInfoCircle, BiX } from 'react-icons/bi'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import AddAppConnection from '@/components/AddAppConnection'
 import RedirectToLogin from '@/components/RedirectToLogin'
+import { TOP_NAV_HEIGHT } from '@/config/layout'
 import * as URLS from '@/config/urls'
 import useAuthentication from '@/hooks/useAuthentication'
 import { useChatStream } from '@/hooks/useChatStream'
 import { useNavigationGuard } from '@/hooks/useNavigationGuard'
 import { usePersistedState } from '@/hooks/usePersistedState'
+import posthog, { isPostHogConfigured } from '@/posthog'
 
-import AddFormsgConnectionModal from './components/AddFormsgConnectionModal'
-import ChatInterface from './components/ChatInterface'
-import ExitAlert from './components/ExitAlert'
 import {
   AiBuilderContextProvider,
   useAiBuilderContext,
 } from './AiBuilderContext'
+import AddFormsgConnectionModal from './components/AddFormsgConnectionModal'
+import ChatInterface from './components/ChatInterface'
+import ExitAlert from './components/ExitAlert'
 import {
   buildFormConnectedMessage,
   buildKickoffMessage,
@@ -61,6 +62,9 @@ function AiBuilderContent() {
     cancelStream,
     resetChat,
     hasReachedLimit,
+    canRetryLastTurn,
+    retryLastTurn,
+    hasHitStepLimit,
     stepParametersByStepId,
     parameterLabelsByStepId,
     completedStepIds,
@@ -334,15 +338,28 @@ function AiBuilderContent() {
               bg="white"
               justifyContent="space-between"
               alignItems="center"
-              py={2}
+              h={TOP_NAV_HEIGHT}
               px={{ base: 4, md: 8 }}
               borderBottom="1px solid"
               borderColor="base.divider.medium"
             >
-              <Flex flex={1} alignItems="center" minWidth={0} gap={2}>
-                <CloseButton size="sm" onClick={handleClose} />
+              <Flex flex={1} alignItems="center" minWidth={0} gap="11px">
+                <Box
+                  as="button"
+                  type="button"
+                  aria-label="Close"
+                  display="flex"
+                  flexShrink={0}
+                  ml="-6px"
+                  layerStyle="focusRing.default"
+                  onClick={handleClose}
+                >
+                  <Icon boxSize={6} color="base.content.default" as={BiX} />
+                </Box>
 
-                <Text noOfLines={1}>{flowName}</Text>
+                <Text noOfLines={1} fontWeight={500}>
+                  {flowName}
+                </Text>
               </Flex>
               <Tag
                 colorScheme="sub"
@@ -360,7 +377,7 @@ function AiBuilderContent() {
             maxW="full"
             px={0}
             py={0}
-            mt={isMobile && isDrawerOpen ? 0 : '57px'}
+            mt={isMobile && isDrawerOpen ? 0 : TOP_NAV_HEIGHT}
             flex={1}
             overflowY="auto"
             bg="white"
@@ -375,6 +392,8 @@ function AiBuilderContent() {
               cancelStream={cancelStream}
               resetChat={resetChat}
               hasReachedLimit={hasReachedLimit}
+              onRetryLastTurn={canRetryLastTurn ? retryLastTurn : undefined}
+              hasHitStepLimit={hasHitStepLimit}
               onAddConnection={flowId ? handleAddConnection : undefined}
               knownFormUrl={prefillFormUrl}
               onConnectForm={pipeCreated ? undefined : handleConnectForm}
@@ -420,6 +439,17 @@ function AiBuilderContent() {
 
 function AiBuilderDraftProvider() {
   const locationState = useLocation()?.state
+  const [params] = useSearchParams()
+  // NOTE: coerce to undefined to fit typing
+  const start = params.get('start') ?? undefined
+  const from = params.get('from')
+
+  useEffect(() => {
+    if (!isPostHogConfigured || !from) {
+      return
+    }
+    posthog.capture('ai_builder:opened', { from })
+  }, [from])
 
   // Persist state to sessionStorage so it survives refresh.
   //
@@ -460,7 +490,7 @@ function AiBuilderDraftProvider() {
   return (
     <AiBuilderContextProvider
       flowName={flowName}
-      chatInput={chatInput}
+      chatInput={chatInput || start}
       chatMessages={chatMessages}
       output={output}
       chatId={chatId}

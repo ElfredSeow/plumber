@@ -1,5 +1,4 @@
 import { IGlobalVariable, IHttpClient } from '@plumber/types'
-
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -38,11 +37,12 @@ describe('formsg webhook registration', () => {
         updatedAt: `${new Date().getTime()}`,
       },
       app: apps.formsg,
-    }
+    } as unknown as IGlobalVariable
   })
 
   // Reset each mock after tests
   afterEach(() => {
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -162,7 +162,7 @@ describe('formsg webhook registration', () => {
           status: 400,
         },
       })
-      await expect(registerWebhookUrl($)).rejects.toThrowError()
+      await expect(registerWebhookUrl($)).rejects.toThrow()
     })
 
     it('should reject if user is not owner or editor', async () => {
@@ -172,7 +172,7 @@ describe('formsg webhook registration', () => {
         },
       } as AxiosError
       $.http.patch = vi.fn().mockRejectedValueOnce(new HttpError(error403))
-      await expect(registerWebhookUrl($)).rejects.toThrowError(
+      await expect(registerWebhookUrl($)).rejects.toThrow(
         FORMSG_WEBHOOK_REGISTRATION_MESSAGE.UNAUTHORIZED,
       )
     })
@@ -183,7 +183,7 @@ describe('formsg webhook registration', () => {
         },
       } as AxiosError
       $.http.patch = vi.fn().mockRejectedValueOnce(new HttpError(error422))
-      await expect(registerWebhookUrl($)).rejects.toThrowError(
+      await expect(registerWebhookUrl($)).rejects.toThrow(
         FORMSG_WEBHOOK_REGISTRATION_MESSAGE.USER_NOT_FOUND,
       )
     })

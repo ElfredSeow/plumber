@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import axios from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -33,6 +32,8 @@ describe('gathersg attachment upload helpers', () => {
   })
 
   afterEach(() => {
+    // Vitest 4 restoreAllMocks no longer clears factory mock call history.
+    vi.resetAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -50,6 +51,23 @@ describe('gathersg attachment upload helpers', () => {
         uuid: MOCK_CASE_UUID,
       })
       expect(token).toBe('tok-123')
+    })
+
+    it('tags a response without a token as third-party', async () => {
+      mocks.httpPost.mockResolvedValueOnce({ data: { data: {} } })
+
+      await expect(
+        generateUploadToken($, {
+          field: 'photos',
+          type: 'attachment',
+          caseUuid: MOCK_CASE_UUID,
+        }),
+      ).rejects.toMatchObject({
+        kind: 'third-party',
+        message: expect.stringContaining(
+          'Ownself Gather did not return an upload token',
+        ),
+      })
     })
   })
 
@@ -154,7 +172,10 @@ describe('gathersg attachment upload helpers', () => {
           fieldType: 'attachment',
           s3Ids: [MOCK_S3_ID],
         }),
-      ).rejects.toThrow('exceeds maximum size')
+      ).rejects.toMatchObject({
+        kind: 'config',
+        message: expect.stringContaining('exceeds maximum size'),
+      })
     })
 
     it('throws a StepError when s3Ids exceeds the max attachments per field', async () => {
@@ -171,7 +192,10 @@ describe('gathersg attachment upload helpers', () => {
           fieldType: 'attachment',
           s3Ids: Array(11).fill(MOCK_S3_ID),
         }),
-      ).rejects.toThrow('exceeding the maximum of 10')
+      ).rejects.toMatchObject({
+        kind: 'config',
+        message: expect.stringContaining('exceeding the maximum of 10'),
+      })
       expect(getObjectSpy).not.toHaveBeenCalled()
     })
   })

@@ -1,5 +1,4 @@
 import type { IGlobalVariable } from '@plumber/types'
-
 import MockAdapter from 'axios-mock-adapter'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -111,7 +110,7 @@ describe('create letter from template', () => {
     $.flow.hasFileProcessingActions = false
 
     await createLetterAction.run($)
-    expect($.setActionItem).toBeCalledWith({
+    expect($.setActionItem).toHaveBeenCalledWith({
       raw: {
         publicId: MOCK_RESPONSE.publicId,
         createdAt: '22 Mar 2024',
@@ -126,7 +125,7 @@ describe('create letter from template', () => {
     $.step.parameters.shouldGeneratePdf = true
 
     await createLetterAction.run($)
-    expect($.setActionItem).toBeCalledWith({
+    expect($.setActionItem).toHaveBeenCalledWith({
       raw: {
         publicId: MOCK_RESPONSE.publicId,
         createdAt: '22 Mar 2024',
@@ -139,7 +138,7 @@ describe('create letter from template', () => {
 
   it('should throw step error for invalid parameters (no field)', async () => {
     $.step.parameters.letterParams = [{ value: 'test' }]
-    await expect(createLetterAction.run($)).rejects.toThrowError()
+    await expect(createLetterAction.run($)).rejects.toThrow()
   })
 
   it('should throw step error for insufficient fields used', async () => {
@@ -147,7 +146,7 @@ describe('create letter from template', () => {
     mockAdapter.onPost('/v1/letters').reply(400, {
       message: 'Invalid letter params.',
     })
-    await expect(createLetterAction.run($)).rejects.toThrowError(
+    await expect(createLetterAction.run($)).rejects.toThrow(
       'Personalised field(s) not specified',
     )
   })

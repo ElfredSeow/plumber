@@ -123,6 +123,71 @@ describe('chatRequestSchema', () => {
       expect(result.success).toBe(true)
     })
 
+    it('should accept a get_flow tool part echoed back by the client', () => {
+      const result = chatRequestSchema.safeParse({
+        messages: [
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-get_flow',
+                toolCallId: 'call-1',
+                state: 'output-available',
+                input: { pipe_id: '550e8400-e29b-41d4-a716-446655440000' },
+                output: { steps: [] },
+              },
+            ],
+          },
+        ],
+      })
+      expect(result.success).toBe(true)
+    })
+
+    it('should accept a data-pipeState part with MRF stage fields', () => {
+      const result = chatRequestSchema.safeParse({
+        messages: [
+          {
+            role: 'assistant',
+            parts: [
+              {
+                type: 'data-pipeState',
+                data: {
+                  pipeId: '550e8400-e29b-41d4-a716-446655440000',
+                  steps: [
+                    {
+                      id: '550e8400-e29b-41d4-a716-446655440001',
+                      appKey: 'postman',
+                      key: 'sendTransactionalEmail',
+                      type: 'action',
+                      position: 3,
+                      status: 'incomplete',
+                      parameters: {},
+                      connectionId: null,
+                      stepName: 'Email rejected',
+                      approval: {
+                        branch: 'reject',
+                        stepId: '550e8400-e29b-41d4-a716-446655440002',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+      expect(result.success).toBe(true)
+      if (result.success) {
+        const part = result.data.messages[0].parts[0] as {
+          data: { steps: Array<{ approval?: unknown }> }
+        }
+        expect(part.data.steps[0].approval).toEqual({
+          branch: 'reject',
+          stepId: '550e8400-e29b-41d4-a716-446655440002',
+        })
+      }
+    })
+
     it('should accept data-stepUpdate part', () => {
       const result = chatRequestSchema.safeParse({
         messages: [
@@ -194,14 +259,22 @@ describe('chatRequestSchema', () => {
       )
     })
 
-    it('should reject more than 50 parts', () => {
-      const parts = Array(51).fill({ type: 'text', text: 'part' })
+    it('should accept exactly 100 parts', () => {
+      const parts = Array(100).fill({ type: 'text', text: 'part' })
+      const result = chatRequestSchema.safeParse({
+        messages: [{ role: 'user', parts }],
+      })
+      expect(result.success).toBe(true)
+    })
+
+    it('should reject more than 100 parts', () => {
+      const parts = Array(101).fill({ type: 'text', text: 'part' })
       const result = chatRequestSchema.safeParse({
         messages: [{ role: 'user', parts }],
       })
       expect(result.success).toBe(false)
       expect(result.error?.issues[0].message).toBe(
-        'Message cannot have more than 50 parts',
+        'Message cannot have more than 100 parts',
       )
     })
   })

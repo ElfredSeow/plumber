@@ -1,8 +1,8 @@
 import { IGlobalVariable, IRawAction } from '@plumber/types'
-
 import { ZodError } from 'zod'
 import { fromZodError } from 'zod-validation-error'
 
+import HttpError from '@/errors/http'
 import StepError, { GenericSolution } from '@/errors/step'
 import Step from '@/models/step'
 
@@ -20,7 +20,6 @@ import {
   SENSITIVE_HEADERS_ERROR,
   SENSITIVE_HEADERS_SOLUTION,
 } from '../../common/sensitive-headers'
-
 import { requestSchema } from './schema'
 
 type TMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -74,7 +73,7 @@ async function run($: IGlobalVariable) {
       lookup: safeAxiosLookup,
       timeout,
       //  overwriting this to allow redirects to resolve
-      validateStatus: (status) =>
+      validateStatus: (status: number) =>
         (status >= 200 && status < 300) ||
         REDIRECT_STATUS_CODES.includes(status),
       // stream the response for custom api to protect against gzip bombs
@@ -140,6 +139,10 @@ async function run($: IGlobalVariable) {
       )
     }
 
+    if (!(err instanceof Error)) {
+      throw err
+    }
+
     if (err.message === RECURSIVE_WEBHOOK_ERROR) {
       throw new StepError(
         RECURSIVE_WEBHOOK_ERROR,
@@ -160,23 +163,25 @@ async function run($: IGlobalVariable) {
       )
     }
 
+    const httpError = err instanceof HttpError ? err : undefined
+
     if (err.message === `timeout of ${timeout}ms exceeded`) {
       throw new StepError(
         `HTTP request exceeded timeout of ${timeout / 1000}s`,
         'The request took too long to respond.',
-        err,
+        httpError,
       )
     }
 
     // remaining errors are http errors to be caught
     throw new StepError(
       `Status code: ${
-        err.response
-          ? `${err.response.status} (${err.response.statusText})`
+        httpError?.response
+          ? `${httpError.response.status} (${httpError.response.statusText})`
           : err.message
       } `,
       'Check your custom app based on the status code and retry again.',
-      err,
+      httpError,
     )
   }
 }

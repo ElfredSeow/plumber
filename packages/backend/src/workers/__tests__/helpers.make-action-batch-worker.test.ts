@@ -1,8 +1,8 @@
 import type { IActionBatchQueue } from '@plumber/types'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { M365_BATCH_SIZE } from '@/config/workers'
+import StepError from '@/errors/step'
 
 import { makeActionBatchWorker } from '../helpers/make-action-batch-worker'
 
@@ -11,14 +11,18 @@ const mocks = vi.hoisted(() => {
 
   return {
     // BullMQ worker mocks
-    workerConstructor: vi.fn(() => ({
-      on: workerOn,
-      close: vi.fn(),
-    })),
+    workerConstructor: vi.fn(function WorkerPro() {
+      return {
+        on: workerOn,
+        close: vi.fn(),
+      }
+    }),
     workerOn,
 
     // Misc mocks
     processOn: vi.fn(),
+    prepareActionExecution: vi.fn(),
+    handleFailedJob: vi.fn(),
   }
 })
 
@@ -48,8 +52,18 @@ vi.mock('@/config/redis', async (importActual) => ({
 
 vi.mock('@/helpers/tracer', () => ({
   default: {
-    wrap: vi.fn(() => ({})),
+    wrap: vi.fn((_name: string, processor: unknown) => processor),
+    scope: () => ({ active: (): null => null }),
   },
+}))
+
+vi.mock('@/services/action', async (importActual) => ({
+  ...(await importActual<typeof import('@/services/action')>()),
+  prepareActionExecution: mocks.prepareActionExecution,
+}))
+
+vi.mock('@/workers/helpers/handle-failed-job', () => ({
+  handleFailedJob: mocks.handleFailedJob,
 }))
 
 vi.mock('@/apps', () => ({
@@ -134,5 +148,33 @@ describe('makeActionBatchWorker', () => {
 
     // registerWorkerEventHandlers attaches listeners via worker.on
     expect(mocks.workerOn).toHaveBeenCalled()
+  })
+
+  it('attaches a StepError as the cause of an isolated job failure', async () => {
+    const stepError = new StepError({
+      name: 'n',
+      solution: 's',
+      kind: 'config',
+    })
+    mocks.prepareActionExecution.mockRejectedValue(stepError)
+    const batchJob = {
+      id: 'job-1',
+      data: { flowId: 'flow-1', executionId: 'execution-1', stepId: 'step-1' },
+      setAsFailed: vi.fn(),
+    }
+
+    makeActionBatchWorker(workerParams)
+    const processor = (
+      mocks.workerConstructor.mock.calls.at(-1) as unknown as [
+        string,
+        (job: unknown) => Promise<void>,
+      ]
+    )[1]
+    await processor({ getBatch: () => [batchJob] })
+
+    const [failedJob, failedJobError] = mocks.handleFailedJob.mock.calls[0]
+    expect(failedJob).toBe(batchJob)
+    expect(failedJobError.cause).toBe(stepError)
+    expect(Object.keys(failedJobError)).not.toContain('cause')
   })
 })

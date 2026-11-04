@@ -1,24 +1,44 @@
-import { IApp, IExecutionStep, IStep } from '@plumber/types'
-
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@apollo/client'
 import { Center } from '@chakra-ui/react'
 import { datadogRum } from '@datadog/browser-rum'
 import { useIsMobile } from '@opengovsg/design-system-react'
+import {
+  IApp,
+  IExecutionStep,
+  IStep,
+  IStepApprovalBranch,
+} from '@plumber/types'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 
 import PrimarySpinner from '@/components/PrimarySpinner'
 import { GET_TEST_EXECUTION_STEPS } from '@/graphql/queries/get-test-execution-steps'
-import { getStepGroupTypeAndCaption, getStepStructure } from '@/helpers/toolbox'
+import { filterStepsByApprovalBranch } from '@/helpers/formsg'
 import { extractVariables } from '@/helpers/variables'
 import { useApps } from '@/hooks/useApps'
 import { Message, PipeStatePart } from '@/hooks/useChatStream'
+
+import {
+  buildPreviewItems,
+  isApprovalPreviewStep,
+  type PreviewItem,
+  type PreviewStep,
+} from './components/StepsPreview/helpers/previewItems'
+import { toPreviewStep } from './components/StepsPreview/helpers/toPreviewStep'
+import { toProposalSteps } from './components/StepsPreview/helpers/toProposalSteps'
 
 export interface AIBuilderDraftState {
   flowName: string
   chatInput: string
   chatMessages: Message[]
   // output can be populated (IStep values) or the initial empty state (empty strings)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   output: Record<string, any>
   /**
    * Unique id for this chat session, used as the Langfuse session id. Optional on the
@@ -39,21 +59,22 @@ interface AIBuilderSharedProps extends AIBuilderDraftState {
   setChatState: (state: AIBuilderDraftState) => void
 }
 
-interface AiBuilderStep extends IStep {
-  description?: string
-  connectionLabel?: string | null
-}
+type AiBuilderStep = PreviewStep
 
 interface AIBuilderContextValue extends AIBuilderSharedProps {
   allApps: IApp[]
   triggerStep: IStep | null
+  // Only the steps on the approval path the user selected, numbered the way
+  // the editor numbers them.
   steps: AiBuilderStep[]
+  // The selected path of each MRF approval step. Absent for a pipe without one.
+  approvalBranches: Record<string, IStepApprovalBranch>
+  setApprovalBranch: (stepId: string, branch: IStepApprovalBranch) => void
   isMobile: boolean
   actionSteps: IStep[]
-  stepsBeforeGroup: IStep[]
-  groupedSteps: IStep[][]
-  stepGroupType: string | null
-  stepGroupCaption: string | null
+  // The action steps grouped into If blocks and a for-each body, the way the
+  // editor draws them.
+  previewItems: PreviewItem[]
   // DataDog RUM Session ID so we can associate the trace with the RUM
   ddSessionId: string
   // Unique id for this chat session, used as the Langfuse session id
@@ -115,42 +136,57 @@ export const AiBuilderContextProvider = ({
     }
 
     // NOTE: re-trigger based on changes to isMobile
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [isMobile])
 
   const { data: allApps, loading: isLoadingAllApps } = useApps()
-  const appsWithActions: IApp[] = allApps.filter(
-    (app: IApp) => !!app.actions?.length,
-  )
 
   /**
    * NOTE: process the steps that have been returned by Pair
    * as if its in the Editor, but a lot simpler
    */
-  const steps = useMemo(() => {
+  const allSteps = useMemo((): AiBuilderStep[] => {
     // Phase 2b+: DB-backed pipe state — steps already have correct positions
     if (output?.pipeId && Array.isArray(output?.steps)) {
-      return (output as PipeStatePart['data'])
-        .steps as unknown as AiBuilderStep[]
+      return (output as PipeStatePart['data']).steps.map(toPreviewStep)
     }
     // Phase 2a (proposal) and legacy path
-    return [
-      ...(output?.trigger ? [output.trigger] : []),
-      ...(output?.actions || []),
-    ].map((step, index) => ({
-      ...step,
-      position: index + 1,
-    }))
+    return toProposalSteps(output?.trigger, output?.actions || [])
   }, [output])
-  const [triggerStep, stepsBeforeGroup, groupedSteps] = useMemo(
-    () => getStepStructure(appsWithActions, steps),
-    [appsWithActions, steps],
+
+  const [selectedApprovalBranches, setSelectedApprovalBranches] = useState<
+    Record<string, IStepApprovalBranch>
+  >({})
+
+  const approvalBranches = useMemo(
+    () =>
+      Object.fromEntries(
+        allSteps
+          .filter(isApprovalPreviewStep)
+          .map((step) => [
+            step.id,
+            selectedApprovalBranches[step.id] ?? 'approve',
+          ]),
+      ),
+    [allSteps, selectedApprovalBranches],
   )
 
-  const { stepGroupType, stepGroupCaption } = useMemo(
-    () => getStepGroupTypeAndCaption(groupedSteps),
-    [groupedSteps],
+  const setApprovalBranch = useCallback(
+    (stepId: string, branch: IStepApprovalBranch) =>
+      setSelectedApprovalBranches((prev) => ({ ...prev, [stepId]: branch })),
+    [],
   )
+
+  const steps = useMemo(
+    () =>
+      filterStepsByApprovalBranch(allSteps, approvalBranches).map(
+        (step, index) => ({ ...step, position: index + 1 }),
+      ),
+    [allSteps, approvalBranches],
+  )
+
+  const triggerStep = steps[0] ?? null
+  const previewItems = useMemo(() => buildPreviewItems(steps.slice(1)), [steps])
 
   const { data: testExecutionStepsData, refetch: refetchTestExecutionSteps } =
     useQuery<{ getTestExecutionSteps: IExecutionStep[] }>(
@@ -208,16 +244,15 @@ export const AiBuilderContextProvider = ({
         parameterLabelsByStepId,
         isMobile,
         steps,
+        approvalBranches,
+        setApprovalBranch,
         triggerStep,
         actionSteps: output?.pipeId
           ? (output?.steps || []).filter(
               (s: { type: string }) => s.type === 'action',
             )
           : output?.actions || [],
-        stepsBeforeGroup,
-        groupedSteps,
-        stepGroupType,
-        stepGroupCaption,
+        previewItems,
         ddSessionId,
         chatId: chatId ?? '',
         clearPersistedState,

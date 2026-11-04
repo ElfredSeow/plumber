@@ -1,10 +1,17 @@
 {
   "name": "@plumber/load-tests",
   "version": "1.0.0",
+  "private": true,
   "description": "",
   "main": "index.js",
   "author": "",
   "license": "ISC",
+  "scripts": {
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt --write ."
+  },
   "devDependencies": {
     "@types/k6": "^1.0.2"
   }

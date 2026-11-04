@@ -3,7 +3,6 @@ import {
   IDynamicData,
   IGlobalVariable,
 } from '@plumber/types'
-
 import { z } from 'zod'
 
 import HttpError from '@/errors/http'
@@ -73,9 +72,8 @@ const dynamicData: IDynamicData = {
     const chatIdsMap: { name: string; value: string }[] = []
     const chatIdsSet = new Set<number>()
     try {
-      const { data, request } = await $.http.get<TelegramGetUpdatesResponse>(
-        getUpdatesApi,
-      )
+      const { data, request } =
+        await $.http.get<TelegramGetUpdatesResponse>(getUpdatesApi)
       // logging for debugging
       logger.info(`Telegram ip success: ${request?.socket?.remoteAddress}`)
 
@@ -84,7 +82,7 @@ const dynamicData: IDynamicData = {
           data: [],
         }
       }
-      data.result.reverse().forEach((update) => {
+      data.result.reverse().forEach((update: TelegramUpdate) => {
         const chat = extractChatFromUpdate(update)
         if (!chat) {
           return

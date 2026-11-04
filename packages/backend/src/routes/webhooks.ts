@@ -1,5 +1,4 @@
 import { IRequest } from '@plumber/types'
-
 import express, {
   NextFunction,
   RequestHandler,
@@ -12,7 +11,7 @@ import appConfig from '@/config/app'
 import webhookHandler from '@/controllers/webhooks/handler'
 import logger from '@/helpers/logger'
 
-const router = Router()
+const router: Router = Router()
 const uploadNone = multer().none()
 
 router.use((req, res, next) => {
@@ -52,8 +51,7 @@ router.use(
   express.text({
     limit: appConfig.requestBodySizeLimit,
     verify(req, res, buf) {
-      // eslint-disable-next-line prettier/prettier
-      (req as IRequest).rawBody = buf
+      ;(req as IRequest).rawBody = buf
     },
   }),
 )

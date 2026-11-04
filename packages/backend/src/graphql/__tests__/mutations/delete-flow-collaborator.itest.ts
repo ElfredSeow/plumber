@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+
 import { NotFoundError } from 'objection'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -172,7 +173,7 @@ describe('delete flow collaborators', () => {
         { input: { flowId: dummyFlow.id, email: owner.email } },
         context,
       ),
-    ).rejects.toThrowError('No such collaborator found') // owner does not exist in flow_collaborators table
+    ).rejects.toThrow('No such collaborator found') // owner does not exist in flow_collaborators table
   })
 
   it('should throw an error if user is not a collaborator', async () => {
@@ -187,7 +188,7 @@ describe('delete flow collaborators', () => {
         },
         context,
       ),
-    ).rejects.toThrowError('No such collaborator found')
+    ).rejects.toThrow('No such collaborator found')
   })
 
   it('should throw an error if user does not have permission to delete collaborator', async () => {
@@ -198,6 +199,6 @@ describe('delete flow collaborators', () => {
         { input: { flowId: dummyFlow.id, email: editor.email } },
         context,
       ),
-    ).rejects.toThrowError('You do not have sufficient permissions')
+    ).rejects.toThrow('You do not have sufficient permissions')
   })
 })

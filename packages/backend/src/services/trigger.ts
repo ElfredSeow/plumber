@@ -1,7 +1,7 @@
-import type { IJSONObject, ITriggerItem } from '@plumber/types'
-
-import { UnrecoverableError } from '@taskforcesh/bullmq-pro'
 import { randomUUID } from 'crypto'
+
+import type { IJSONObject, ITriggerItem } from '@plumber/types'
+import { UnrecoverableError } from '@taskforcesh/bullmq-pro'
 import { z } from 'zod'
 
 import { retryOnTransientDbError } from '@/helpers/retry-on-transient-db-error'
@@ -56,10 +56,11 @@ export const processTrigger = async (
 ): Promise<ProcessTriggerResult> => {
   const { flowId, stepId, triggerItem, error, testRun } = options
 
-  const step = await Step.query()
-    .findById(stepId)
-    .withGraphFetched('flow')
-    .throwIfNotFound()
+  const step = await retryOnTransientDbError(
+    () =>
+      Step.query().findById(stepId).withGraphFetched('flow').throwIfNotFound(),
+    { context: { flowId, stepId } },
+  )
 
   if (step.flow?.config?.isForceClogged) {
     throw new UnrecoverableError(`Pipe ${flowId} has been force clogged`)
